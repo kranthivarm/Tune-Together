@@ -1,0 +1,93 @@
+version: "3.8"
+
+services:
+  # ─── Data Stores ───────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: tt-postgres
+    environment:
+      POSTGRES_DB: tunetogether
+      POSTGRES_USER: tunetogether
+      POSTGRES_PASSWORD: tunetogether_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tunetogether"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: tt-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ─── LiveKit SFU ───────────────────────────────────────────
+  livekit:
+    image: livekit/livekit-server:latest
+    container_name: tt-livekit
+    command: --config /etc/livekit.yaml
+    ports:
+      - "7880:7880"   # HTTP + WebSocket signaling
+      - "7881:7881"   # RTC (TCP fallback)
+      - "50000-50060:50000-50060/udp"  # WebRTC media (narrowed range for dev)
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # ─── Spring Boot API ───────────────────────────────────────
+  api:
+    build:
+      context: ../api
+      dockerfile: Dockerfile
+    container_name: tt-api
+    environment:
+      SPRING_PROFILES_ACTIVE: dev
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/tunetogether
+      SPRING_DATASOURCE_USERNAME: tunetogether
+      SPRING_DATASOURCE_PASSWORD: tunetogether_dev
+      JWT_SECRET: dev-secret-key-change-in-production-min-32-chars!!
+      LIVEKIT_HOST: http://livekit:7880
+      LIVEKIT_API_KEY: devkey
+      LIVEKIT_API_SECRET: dev-secret-that-is-at-least-32-characters-long
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ─── Go Signaling Server ───────────────────────────────────
+  realtime:
+    build:
+      context: ../realtime
+      dockerfile: Dockerfile
+    container_name: tt-realtime
+    environment:
+      PORT: "8081"
+      DATABASE_URL: postgres://tunetogether:tunetogether_dev@postgres:5432/tunetogether?sslmode=disable
+      LIVEKIT_HOST: http://livekit:7880
+      LIVEKIT_API_KEY: devkey
+      LIVEKIT_API_SECRET: dev-secret-that-is-at-least-32-characters-long
+      JWT_SECRET: dev-secret-key-change-in-production-min-32-chars!!
+    ports:
+      - "8081:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      livekit:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

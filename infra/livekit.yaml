@@ -1,0 +1,62 @@
+# LiveKit Server Configuration (Local Development)
+# Optimized for TuneTogether audio streaming
+# See: https://docs.livekit.io/realtime/self-hosting/deployment/
+
+port: 7880
+rtc:
+  port_range_start: 50000
+  port_range_end: 50060
+  tcp_port: 7881
+  use_external_ip: false
+
+redis:
+  address: redis:6379
+
+keys:
+  devkey: dev-secret-that-is-at-least-32-characters-long
+
+logging:
+  level: info
+
+room:
+  # Auto-close rooms after all participants leave (5 min)
+  empty_timeout: 300
+  # Max participants per room (aligned with our 50-member target)
+  max_participants: 50
+
+# ─── Audio Configuration ──────────────────────────────────────────────
+# TuneTogether is audio-only. These settings optimize for
+# speech+music quality at low latency.
+
+audio:
+  # Active speaker detection interval
+  active_speaker_update_interval: 300ms
+
+# Codec settings are negotiated per-track via LiveKit's track publish options.
+# The host device publishes Opus-encoded audio with these recommended settings:
+#
+# ┌──────────────────────────────────────────────────────────────────┐
+# │ Opus Codec Configuration (set client-side on track publish)     │
+# ├────────────────────┬─────────────────────────────────────────────┤
+# │ Codec              │ Opus (RFC 6716)                             │
+# │ Sample Rate        │ 48 kHz                                     │
+# │ Channels           │ 2 (stereo)                                 │
+# │ Target Bitrate     │ 128 kbps (high quality music)               │
+# │ Frame Size         │ 20ms (good latency/quality balance)         │
+# │ DTX                │ Disabled (continuous music, not speech)      │
+# │ FEC                │ Enabled (Forward Error Correction)           │
+# │ Application Type   │ OPUS_APPLICATION_AUDIO (music-optimized)     │
+# └────────────────────┴─────────────────────────────────────────────┘
+#
+# Why these values:
+# - 128 kbps stereo Opus is near-transparent quality for music
+# - 20ms frame size gives good latency (vs 60ms default)
+# - DTX off: music is continuous; DTX would insert comfort noise
+# - FEC on: compensates for packet loss on WiFi networks
+# - AUDIO application type: Opus internally disables VAD/speech
+#   optimizations and uses MDCT-only mode for better music quality
+#
+# Bandwidth estimate per room:
+#   128 kbps × 1 track × N members ≈ 128 kbps upload (host only)
+#   + 128 kbps download per member
+#   50 members = 6.4 Mbps total SFU egress

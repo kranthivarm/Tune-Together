@@ -1,0 +1,65 @@
+# ========================
+# Java / Spring Boot
+# ========================
+api/target/
+api/*.jar
+api/.mvn/wrapper/maven-wrapper.jar
+
+# ========================
+# Go
+# ========================
+realtime/bin/
+realtime/vendor/
+
+# ========================
+# Flutter / Dart
+# ========================
+mobile/.dart_tool/
+mobile/.packages
+mobile/.pub-cache/
+mobile/.pub/
+mobile/build/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/ios/Pods/
+mobile/ios/.symlinks/
+mobile/android/.gradle/
+mobile/android/local.properties
+mobile/android/app/debug/
+mobile/android/app/profile/
+mobile/android/app/release/
+
+# ========================
+# React / Node
+# ========================
+web/node_modules/
+web/dist/
+web/.env.local
+web/.env.*.local
+
+# ========================
+# IDE
+# ========================
+.idea/
+.vscode/
+*.iml
+*.iws
+*.ipr
+.project
+.classpath
+.settings/
+
+# ========================
+# OS
+# ========================
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# ========================
+# Environment / Secrets
+# ========================
+.env
+*.env.local
