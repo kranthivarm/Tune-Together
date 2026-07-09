@@ -13,8 +13,11 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /server ./cmd/server
 FROM alpine:3.20
 
 RUN apk --no-cache add ca-certificates
+
 COPY --from=builder /server /server
 
-EXPOSE 8081
+# Render uses PORT env var (default 10000)
+# For local Docker, override with -e PORT=8081
+EXPOSE ${PORT:-8081}
 
 ENTRYPOINT ["/server"]

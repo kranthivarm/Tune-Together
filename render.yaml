@@ -1,0 +1,94 @@
+# ═══════════════════════════════════════════════════════════════
+# TuneTogether — Render Blueprint
+# Deploy with: Dashboard → New → Blueprint → Connect repo
+# ═══════════════════════════════════════════════════════════════
+#
+# This blueprint deploys:
+#   1. PostgreSQL (managed)
+#   2. Spring Boot API (Docker web service)
+#   3. Go Realtime/WebSocket server (Docker web service)
+#
+# LiveKit (SFU) is hosted externally on LiveKit Cloud because
+# Render doesn't support UDP port ranges needed for WebRTC.
+# Sign up at https://cloud.livekit.io (free tier available).
+#
+# After deploying, set the LiveKit env vars in the Render dashboard:
+#   LIVEKIT_HOST, LIVEKIT_API_KEY, LIVEKIT_API_SECRET
+# ═══════════════════════════════════════════════════════════════
+
+databases:
+  - name: tunetogether-db
+    plan: free # Use 'starter' for production
+    databaseName: tunetogether
+    user: tunetogether
+    region: oregon
+
+services:
+  # ─── Spring Boot REST API ────────────────────────────────────
+  - type: web
+    name: tunetogether-api
+    runtime: docker
+    region: oregon
+    plan: free # Use 'starter' for production
+    dockerfilePath: ./api/Dockerfile
+    dockerContext: ./api
+    healthCheckPath: /actuator/health
+    envVars:
+      - key: SPRING_PROFILES_ACTIVE
+        value: prod
+      - key: SPRING_DATASOURCE_URL
+        fromDatabase:
+          name: tunetogether-db
+          property: connectionString
+        # Render gives a postgres:// URL; Spring needs jdbc:postgresql://
+        # We handle this transform in application-prod.yml via DATABASE_URL
+      - key: DATABASE_URL
+        fromDatabase:
+          name: tunetogether-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true # Render auto-generates a secure random string
+      - key: LIVEKIT_HOST
+        sync: false # Set manually after LiveKit Cloud setup
+      - key: LIVEKIT_API_KEY
+        sync: false
+      - key: LIVEKIT_API_SECRET
+        sync: false
+      - key: CORS_ALLOWED_ORIGINS
+        value: "https://tunetogether-web.onrender.com"
+      - key: REALTIME_SERVICE_URL
+        fromService:
+          name: tunetogether-realtime
+          type: web
+          property: hostport
+          envVarKey: REALTIME_SERVICE_URL
+
+  # ─── Go Realtime / WebSocket Server ─────────────────────────
+  - type: web
+    name: tunetogether-realtime
+    runtime: docker
+    region: oregon
+    plan: free # Use 'starter' for production
+    dockerfilePath: ./realtime/Dockerfile
+    dockerContext: ./realtime
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: "10000" # Render expects port 10000 by default
+      - key: JWT_SECRET
+        fromService:
+          name: tunetogether-api
+          type: web
+          envVarKey: JWT_SECRET
+      - key: LIVEKIT_HOST
+        sync: false # Set manually after LiveKit Cloud setup
+      - key: LIVEKIT_API_KEY
+        sync: false
+      - key: LIVEKIT_API_SECRET
+        sync: false
+      - key: SPRING_BOOT_URL
+        fromService:
+          name: tunetogether-api
+          type: web
+          property: hostport
+          envVarKey: SPRING_BOOT_URL

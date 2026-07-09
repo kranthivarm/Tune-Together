@@ -1,0 +1,47 @@
+# ═══════════════════════════════════════════════════════════════
+# Production profile — Render deployment
+# ═══════════════════════════════════════════════════════════════
+# Render provides DATABASE_URL as: postgres://user:pass@host:port/dbname
+# Spring Boot needs: jdbc:postgresql://host:port/dbname
+# We handle both formats here.
+
+spring:
+  datasource:
+    url: ${JDBC_DATABASE_URL:${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/tunetogether}}
+    username: ${SPRING_DATASOURCE_USERNAME:}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 5     # Render free tier allows limited connections
+      minimum-idle: 2
+      connection-timeout: 30000
+      idle-timeout: 600000
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+
+server:
+  port: ${PORT:8080}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+logging:
+  level:
+    com.tunetogether: INFO
+    org.springframework: WARN
+    org.hibernate: WARN

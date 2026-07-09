@@ -17,6 +17,8 @@ WORKDIR /app
 
 COPY --from=builder /app/target/*.jar app.jar
 
-EXPOSE 8080
+# Render uses PORT env var; Spring Boot reads it from application-prod.yml
+# For local Docker, default is 8080
+EXPOSE ${PORT:-8080}
 
 ENTRYPOINT ["java", "-jar", "app.jar"]
