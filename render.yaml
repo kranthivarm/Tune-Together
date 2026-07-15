@@ -18,7 +18,7 @@
 
 databases:
   - name: tunetogether-db
-    plan: free # Use 'starter' for production
+    plan: free
     databaseName: tunetogether
     user: tunetogether
     region: oregon
@@ -29,59 +29,52 @@ services:
     name: tunetogether-api
     runtime: docker
     region: oregon
-    plan: free # Use 'starter' for production
+    plan: free
     dockerfilePath: ./api/Dockerfile
     dockerContext: ./api
     healthCheckPath: /actuator/health
     envVars:
       - key: SPRING_PROFILES_ACTIVE
         value: prod
-      - key: SPRING_DATASOURCE_URL
-        fromDatabase:
-          name: tunetogether-db
-          property: connectionString
-        # Render gives a postgres:// URL; Spring needs jdbc:postgresql://
-        # We handle this transform in application-prod.yml via DATABASE_URL
       - key: DATABASE_URL
         fromDatabase:
           name: tunetogether-db
           property: connectionString
       - key: JWT_SECRET
-        generateValue: true # Render auto-generates a secure random string
+        generateValue: true
       - key: LIVEKIT_HOST
-        sync: false # Set manually after LiveKit Cloud setup
+        sync: false
       - key: LIVEKIT_API_KEY
         sync: false
       - key: LIVEKIT_API_SECRET
         sync: false
       - key: CORS_ALLOWED_ORIGINS
-        value: "https://tunetogether-web.onrender.com"
+        value: "*"
       - key: REALTIME_SERVICE_URL
         fromService:
           name: tunetogether-realtime
           type: web
           property: hostport
-          envVarKey: REALTIME_SERVICE_URL
 
   # ─── Go Realtime / WebSocket Server ─────────────────────────
   - type: web
     name: tunetogether-realtime
     runtime: docker
     region: oregon
-    plan: free # Use 'starter' for production
+    plan: free
     dockerfilePath: ./realtime/Dockerfile
     dockerContext: ./realtime
     healthCheckPath: /health
     envVars:
       - key: PORT
-        value: "10000" # Render expects port 10000 by default
+        value: "10000"
       - key: JWT_SECRET
         fromService:
           name: tunetogether-api
           type: web
           envVarKey: JWT_SECRET
       - key: LIVEKIT_HOST
-        sync: false # Set manually after LiveKit Cloud setup
+        sync: false
       - key: LIVEKIT_API_KEY
         sync: false
       - key: LIVEKIT_API_SECRET
@@ -91,4 +84,3 @@ services:
           name: tunetogether-api
           type: web
           property: hostport
-          envVarKey: SPRING_BOOT_URL
