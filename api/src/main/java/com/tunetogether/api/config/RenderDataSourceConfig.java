@@ -35,8 +35,14 @@ public class RenderDataSourceConfig {
         String password = dbUri.getUserInfo().split(":")[1];
 
         // Convert postgres:// → jdbc:postgresql://
+        // Render internal URLs may omit the port (URI.getPort() returns -1)
+        int port = dbUri.getPort();
+        if (port == -1) {
+            port = 5432; // PostgreSQL default
+        }
+
         String jdbcUrl = "jdbc:postgresql://" + dbUri.getHost()
-                + ":" + dbUri.getPort()
+                + ":" + port
                 + dbUri.getPath();
 
         // Render managed Postgres requires SSL
