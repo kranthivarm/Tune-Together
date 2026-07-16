@@ -93,22 +93,33 @@ function RoomScreen() {
       setMembers(roomData.members || []);
       setPlaylist(roomData.playlist || []);
 
-      // 2. Connect WebSocket
-      await websocketService.connect(auth.token);
-      setupWebSocketListeners();
-
-      // 3. Connect LiveKit (token comes from WebSocket room_state message)
+      // 2. Register LiveKit token listener BEFORE connecting
+      //    (Go sends room_state immediately on WS connect — must not miss it)
       websocketService.onRoomState((state) => {
-        if (state.livekitToken) {
+        if (state.livekitToken && !livekitService.connected) {
+          console.log('Got LiveKit token from room_state, connecting...');
           livekitService.connect({ token: state.livekitToken, isHost });
         }
-        // Also update members from room state
         if (state.members) {
           setMembers(state.members);
         }
       });
 
-      // 4. Set up AudioEngine listeners (host only)
+      // 3. Connect WebSocket
+      await websocketService.connect(auth.token);
+      setupWebSocketListeners();
+
+      // 4. Fallback: check if LiveKit token was already received during connect
+      //    (in case room_state arrived before listeners were fully ready)
+      setTimeout(() => {
+        const token = websocketService.getLiveKitToken();
+        if (token && !livekitService.connected) {
+          console.log('LiveKit token found via fallback check, connecting...');
+          livekitService.connect({ token, isHost });
+        }
+      }, 500);
+
+      // 5. Set up AudioEngine listeners (host only)
       if (isHost) {
         audioEngine.onTimeUpdate(({ currentTime: ct, duration: dur, progress: p }) => {
           setCurrentTime(ct);
@@ -377,19 +388,39 @@ function RoomScreen() {
 
   // ─── Device Mirroring (Tab Audio Capture) ─────────────────
 
+  // Check if getDisplayMedia is available (not on mobile browsers)
+  const canMirror = typeof navigator?.mediaDevices?.getDisplayMedia === 'function';
+
   const startMirroring = async () => {
     if (!isHost) return;
+
+    // Feature detection
+    if (!canMirror) {
+      setError(
+        'Device mirroring is only available on desktop browsers (Chrome, Edge, Firefox). ' +
+        'On mobile, use the TuneTogether Android app for device audio mirroring.'
+      );
+      return;
+    }
+
     try {
       // Request tab/screen audio capture via getDisplayMedia
+      // Note: Chrome requires video to be requested (we'll discard the video track)
       const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: false,
+        video: true,  // Required by Chrome, we'll discard it
         audio: true,
       });
+
+      // Stop video track immediately (we only need audio)
+      stream.getVideoTracks().forEach((t) => t.stop());
 
       // Check if audio track was captured
       const audioTracks = stream.getAudioTracks();
       if (audioTracks.length === 0) {
-        setError('No audio track captured. Make sure to share a tab with audio.');
+        setError(
+          'No audio captured. When sharing, make sure to check "Share tab audio" ' +
+          'or select a browser tab (not a window).'
+        );
         return;
       }
 
@@ -397,7 +428,7 @@ function RoomScreen() {
       await livekitService.startPublishingStream(stream);
       setIsMirroring(true);
     } catch (err) {
-      if (err.name !== 'AbortError') {
+      if (err.name !== 'AbortError' && err.name !== 'NotAllowedError') {
         console.error('Mirror mode failed:', err);
         setError('Failed to start mirroring: ' + err.message);
       }
@@ -485,17 +516,21 @@ function RoomScreen() {
               {!isMirroring ? (
                 <div className="mirror-card-content">
                   <div className="mirror-info">
-                    <span className="mirror-icon">📱</span>
+                    <span className="mirror-icon">{canMirror ? '🔊' : '📱'}</span>
                     <div>
                       <div className="mirror-title">Device Audio Mirroring</div>
                       <div className="mirror-subtitle">
-                        Share audio from any tab — Spotify, YouTube, anything
+                        {canMirror
+                          ? 'Share audio from any browser tab — Spotify, YouTube, anything'
+                          : 'Use a desktop browser or the Android app for device audio mirroring'}
                       </div>
                     </div>
                   </div>
-                  <button className="mirror-btn" onClick={startMirroring}>
-                    🔊 Start Mirroring
-                  </button>
+                  {canMirror && (
+                    <button className="mirror-btn" onClick={startMirroring}>
+                      🔊 Start Mirroring
+                    </button>
+                  )}
                 </div>
               ) : (
                 <div className="mirror-active">
