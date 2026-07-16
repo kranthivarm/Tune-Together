@@ -96,6 +96,49 @@ class ApiService {
       throw new Error('Failed to close room');
     }
   }
+
+  // ─── Playlist Endpoints ────────────────────────────────────
+
+  /**
+   * POST /rooms/{code}/playlist — Add track metadata (host only)
+   * Note: Only metadata is sent. Audio files NEVER leave the host device.
+   */
+  async addTrackMetadata(roomCode, { clientTrackId, title, artist, durationMs }) {
+    const response = await fetch(`${API_BASE_URL}/rooms/${roomCode}/playlist`, {
+      method: 'POST',
+      headers: this.getHeaders(true),
+      body: JSON.stringify({ clientTrackId, title, artist, durationMs }),
+    });
+
+    return this.handleResponse(response);
+  }
+
+  /**
+   * DELETE /rooms/{code}/playlist/{trackId} — Remove track (host only)
+   */
+  async removeTrack(roomCode, trackId) {
+    const response = await fetch(`${API_BASE_URL}/rooms/${roomCode}/playlist/${trackId}`, {
+      method: 'DELETE',
+      headers: this.getHeaders(true),
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to remove track');
+    }
+  }
+
+  /**
+   * PUT /rooms/{code}/playlist — Reorder playlist (host only)
+   */
+  async reorderPlaylist(roomCode, trackIds) {
+    const response = await fetch(`${API_BASE_URL}/rooms/${roomCode}/playlist`, {
+      method: 'PUT',
+      headers: this.getHeaders(true),
+      body: JSON.stringify({ trackIds }),
+    });
+
+    return this.handleResponse(response);
+  }
 }
 
 export default new ApiService();

@@ -1,60 +1,121 @@
 /**
  * LiveKit Service for TuneTogether Web App
- * Handles WebRTC audio streaming (subscribe-only for web clients)
  * 
- * Phase 7: Includes drift monitoring and correction
+ * Host: Publishes audio from AudioEngine's MediaStream output
+ * Member: Subscribes to host's audio track and plays through speakers
  */
 
 import {
   Room,
   RoomEvent,
-  RemoteTrackPublication,
-  RemoteAudioTrack,
+  Track,
+  LocalAudioTrack,
 } from 'livekit-client';
+import audioEngine from './AudioEngine';
+
+const LIVEKIT_URL = import.meta.env.VITE_LIVEKIT_URL || 'ws://localhost:7880';
 
 class LiveKitService {
   constructor() {
     this.room = null;
+    this.localAudioTrack = null;
     this.audioElement = null;
     this.connected = false;
+    this.isPublishing = false;
+
+    // Clock sync
+    this.clockOffsetMs = 0;
+
+    // Listeners
     this.connectionListeners = [];
     this.audioTrackListeners = [];
-    
-    // Phase 7: Drift monitoring
-    this.playbackStartTime = null;
-    this.playbackStartPosition = 0;
-    this.clockOffsetMs = 0;
-    this.currentPlaybackRate = 1.0;
   }
 
   /**
-   * Connect to LiveKit room (subscribe-only)
+   * Connect to LiveKit room
+   * @param {Object} opts
+   * @param {string} opts.token - LiveKit access token
+   * @param {boolean} opts.isHost - Whether this client is the host
    */
-  async connect({ url, token }) {
+  async connect({ token, isHost }) {
+    if (!token) {
+      console.warn('No LiveKit token provided, skipping LiveKit connection');
+      return;
+    }
+
     try {
       this.room = new Room({
         adaptiveStream: true,
         dynacast: true,
-        videoCaptureDefaults: {
-          resolution: { width: 0, height: 0 }, // No video
-        },
       });
 
-      // Listen to room events
       this.setupRoomEventListeners();
 
-      // Connect to room
-      await this.room.connect(url, token);
+      await this.room.connect(LIVEKIT_URL, token);
       this.connected = true;
-
       console.log('Connected to LiveKit room');
       this.notifyConnectionListeners(true);
+
+      // If host, start publishing audio from AudioEngine
+      if (isHost) {
+        await this.startPublishing();
+      }
     } catch (error) {
       console.error('Failed to connect to LiveKit:', error);
       this.connected = false;
       this.notifyConnectionListeners(false);
-      throw error;
+      // Don't throw — LiveKit is optional for room functionality
     }
+  }
+
+  /**
+   * Host: Start publishing audio from AudioEngine's MediaStream
+   */
+  async startPublishing() {
+    if (!this.room || !this.connected) return;
+
+    try {
+      // Initialize AudioEngine if needed
+      await audioEngine.init();
+
+      const stream = audioEngine.getOutputStream();
+      if (!stream) {
+        console.warn('AudioEngine has no output stream yet');
+        return;
+      }
+
+      const audioTracks = stream.getAudioTracks();
+      if (audioTracks.length === 0) {
+        console.warn('No audio tracks in MediaStream');
+        return;
+      }
+
+      // Create LocalAudioTrack from AudioEngine's MediaStream
+      this.localAudioTrack = new LocalAudioTrack(audioTracks[0], undefined, false);
+
+      // Publish to room
+      await this.room.localParticipant.publishTrack(this.localAudioTrack, {
+        name: 'host-audio',
+        source: Track.Source.Microphone, // Use microphone source for audio
+      });
+
+      this.isPublishing = true;
+      console.log('Publishing audio track to LiveKit');
+    } catch (error) {
+      console.error('Failed to publish audio:', error);
+    }
+  }
+
+  /**
+   * Host: Stop publishing audio
+   */
+  async stopPublishing() {
+    if (this.localAudioTrack && this.room?.localParticipant) {
+      await this.room.localParticipant.unpublishTrack(this.localAudioTrack);
+      this.localAudioTrack.stop();
+      this.localAudioTrack = null;
+    }
+    this.isPublishing = false;
   }
 
   /**
@@ -63,18 +124,17 @@ class LiveKitService {
   setupRoomEventListeners() {
     if (!this.room) return;
 
-    // Track subscribed (we receive audio from host)
+    // Track subscribed (members receive host audio)
     this.room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
       console.log('Track subscribed:', track.kind, 'from', participant.identity);
 
-      if (track.kind === 'audio' && track instanceof RemoteAudioTrack) {
+      if (track.kind === 'audio') {
         this.handleAudioTrack(track);
       }
     });
 
     // Track unsubscribed
-    this.room.on(RoomEvent.TrackUnsubscribed, (track, publication, participant) => {
-      console.log('Track unsubscribed:', track.kind);
+    this.room.on(RoomEvent.TrackUnsubscribed, (track) => {
       if (track.kind === 'audio') {
         this.stopAudio();
       }
@@ -84,12 +144,8 @@ class LiveKitService {
     this.room.on(RoomEvent.Disconnected, () => {
       console.log('Disconnected from LiveKit');
       this.connected = false;
+      this.isPublishing = false;
       this.notifyConnectionListeners(false);
-    });
-
-    // Reconnecting
-    this.room.on(RoomEvent.Reconnecting, () => {
-      console.log('Reconnecting to LiveKit...');
     });
 
     // Reconnected
@@ -101,10 +157,9 @@ class LiveKitService {
   }
 
   /**
-   * Handle incoming audio track from host
+   * Handle incoming audio track from host (member side)
    */
   handleAudioTrack(track) {
-    // Create audio element if it doesn't exist
     if (!this.audioElement) {
       this.audioElement = track.attach();
       document.body.appendChild(this.audioElement);
@@ -113,17 +168,15 @@ class LiveKitService {
       track.attach(this.audioElement);
     }
 
-    // Play audio
     this.audioElement.play().catch((error) => {
       console.error('Failed to play audio:', error);
     });
 
-    // Notify listeners
-    this.audioTrackListeners.forEach((callback) => callback(track));
+    this.audioTrackListeners.forEach((cb) => cb(track));
   }
 
   /**
-   * Stop audio playback
+   * Stop audio playback (member side)
    */
   stopAudio() {
     if (this.audioElement) {
@@ -136,6 +189,8 @@ class LiveKitService {
    * Disconnect from LiveKit
    */
   async disconnect() {
+    await this.stopPublishing();
+
     if (this.room) {
       await this.room.disconnect();
       this.room = null;
@@ -150,119 +205,63 @@ class LiveKitService {
   }
 
   /**
-   * Phase 7: Set clock offset from time sync
+   * Set clock offset from time sync
    */
   setClockOffset(offsetMs) {
     this.clockOffsetMs = offsetMs;
   }
 
   /**
-   * Phase 7: Start playback at specific time (for sync)
-   */
-  async playAtTime(timestampMs, trackStartPosition = 0) {
-    if (!this.audioElement) return;
-
-    const now = Date.now();
-    const delayMs = timestampMs - now - this.clockOffsetMs;
-
-    console.log(`Scheduled playback in ${delayMs}ms`);
-
-    if (delayMs > 0) {
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
-    }
-
-    this.playbackStartTime = Date.now();
-    this.playbackStartPosition = trackStartPosition;
-
-    await this.audioElement.play();
-  }
-
-  /**
-   * Phase 7: Get current playback position
+   * Get current playback position (delegates to AudioEngine for host)
    */
   getCurrentPosition() {
-    if (!this.playbackStartTime || !this.audioElement) {
-      return 0;
-    }
-
-    const elapsed = Date.now() - this.playbackStartTime;
-    return this.playbackStartPosition + elapsed;
+    return audioEngine.getCurrentTimeMs();
   }
 
   /**
-   * Phase 7: Apply drift correction (adjust playback rate)
-   */
-  applyDriftCorrection({ targetPositionMs, adjustmentRate }) {
-    if (!this.audioElement) return;
-
-    // Adjust playback rate slightly (0.98x to 1.02x)
-    // This is smooth and inaudible, unlike hard jumps
-    const clampedRate = Math.max(0.98, Math.min(1.02, adjustmentRate));
-    
-    this.audioElement.playbackRate = clampedRate;
-    this.currentPlaybackRate = clampedRate;
-
-    console.log(`Applied drift correction: rate=${clampedRate.toFixed(4)}x, target=${targetPositionMs}ms`);
-
-    // Reset to 1.0 after correction period (5 seconds)
-    setTimeout(() => {
-      if (this.audioElement && Math.abs(this.currentPlaybackRate - 1.0) > 0.001) {
-        this.audioElement.playbackRate = 1.0;
-        this.currentPlaybackRate = 1.0;
-        console.log('Drift correction complete, reset to 1.0x');
-      }
-    }, 5000);
-  }
-
-  /**
-   * Pause audio
+   * Pause (delegates to AudioEngine)
    */
   pause() {
-    if (this.audioElement) {
-      this.audioElement.pause();
-    }
+    audioEngine.pause();
   }
 
   /**
-   * Resume audio
+   * Apply drift correction
    */
-  resume() {
+  applyDriftCorrection({ targetPositionMs, adjustmentRate }) {
+    // For members: adjust the audio element playback rate
     if (this.audioElement) {
-      this.audioElement.play();
+      const clampedRate = Math.max(0.98, Math.min(1.02, adjustmentRate));
+      this.audioElement.playbackRate = clampedRate;
+
+      setTimeout(() => {
+        if (this.audioElement) {
+          this.audioElement.playbackRate = 1.0;
+        }
+      }, 5000);
     }
   }
 
-  /**
-   * Subscribe to connection state changes
-   */
+  // ─── Listener management ─────────────────────────────────
+
   onConnectionStateChange(callback) {
     this.connectionListeners.push(callback);
     return () => {
-      const index = this.connectionListeners.indexOf(callback);
-      if (index > -1) {
-        this.connectionListeners.splice(index, 1);
-      }
+      const idx = this.connectionListeners.indexOf(callback);
+      if (idx > -1) this.connectionListeners.splice(idx, 1);
     };
   }
 
-  /**
-   * Subscribe to audio track events
-   */
   onAudioTrack(callback) {
     this.audioTrackListeners.push(callback);
     return () => {
-      const index = this.audioTrackListeners.indexOf(callback);
-      if (index > -1) {
-        this.audioTrackListeners.splice(index, 1);
-      }
+      const idx = this.audioTrackListeners.indexOf(callback);
+      if (idx > -1) this.audioTrackListeners.splice(idx, 1);
     };
   }
 
-  /**
-   * Notify connection listeners
-   */
   notifyConnectionListeners(connected) {
-    this.connectionListeners.forEach((callback) => callback(connected));
+    this.connectionListeners.forEach((cb) => cb(connected));
   }
 }
 

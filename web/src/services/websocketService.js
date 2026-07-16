@@ -11,16 +11,20 @@ class WebSocketService {
     this.connected = false;
     this.listeners = new Map();
     this.clockSyncListeners = [];
-    this.driftListeners = []; // Phase 7: drift monitoring
+    this.driftListeners = [];
+    this.roomStateListeners = [];
     this.reconnectAttempts = 0;
     this.maxReconnectAttempts = 5;
     this.reconnectDelay = 1000;
+    this.livekitToken = null;
+    this.authToken = null;
   }
 
   /**
    * Connect to WebSocket server with auth token
    */
   connect(authToken) {
+    this.authToken = authToken;
     return new Promise((resolve, reject) => {
       const url = `${WS_BASE_URL}?token=${authToken}`;
       this.ws = new WebSocket(url);
@@ -120,8 +124,18 @@ class WebSocketService {
         return;
       }
 
-      // Phase 7: Handle drift correction
-      if (type === 'driftCorrection') {
+      // Handle room state (contains LiveKit token)
+      if (type === 'room_state') {
+        const payload = message.payload || message;
+        if (payload.livekitToken) {
+          this.livekitToken = payload.livekitToken;
+        }
+        this.roomStateListeners.forEach((cb) => cb(payload));
+        return;
+      }
+
+      // Handle drift correction
+      if (type === 'driftCorrection' || type === 'drift_correction') {
         this.handleDriftCorrection(message);
         return;
       }
@@ -227,6 +241,62 @@ class WebSocketService {
         this.driftListeners.splice(index, 1);
       }
     };
+  }
+
+  /**
+   * Subscribe to room state updates (contains LiveKit token)
+   */
+  onRoomState(callback) {
+    this.roomStateListeners.push(callback);
+    return () => {
+      const index = this.roomStateListeners.indexOf(callback);
+      if (index > -1) this.roomStateListeners.splice(index, 1);
+    };
+  }
+
+  /**
+   * Get the LiveKit token received from room state
+   */
+  getLiveKitToken() {
+    return this.livekitToken;
+  }
+
+  // ─── Host Control Messages ──────────────────────────────────
+
+  sendPlay(trackId, positionMs = 0) {
+    this.send('play', {
+      payload: { trackId, positionMs, hostTimestamp: Date.now() },
+    });
+  }
+
+  sendPause(positionMs = 0) {
+    this.send('pause', {
+      payload: { positionMs, hostTimestamp: Date.now() },
+    });
+  }
+
+  sendSeek(positionMs) {
+    this.send('seek', {
+      payload: { positionMs, hostTimestamp: Date.now() },
+    });
+  }
+
+  sendSkip(direction = 'next') {
+    this.send('skip', {
+      payload: { direction },
+    });
+  }
+
+  sendTrackChanged(track) {
+    this.send('track_changed', {
+      payload: {
+        trackId: track.id,
+        trackIndex: track.orderIndex || 0,
+        title: track.title,
+        artist: track.artist,
+        durationMs: track.durationMs,
+      },
+    });
   }
 }
 

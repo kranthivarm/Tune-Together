@@ -49,7 +49,6 @@ dependencies:
   
   # Audio File Handling
   file_picker: ^8.0.0+1
-  audiotagger: ^2.2.1
   just_audio: ^0.9.38
   
   # Permissions

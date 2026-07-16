@@ -1,37 +1,29 @@
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
-import 'package:audiotagger/audiotagger.dart';
+import 'package:just_audio/just_audio.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../models/room.dart';
 import 'package:uuid/uuid.dart';
 
 class AudioFileService {
-  final _tagger = Audiotagger();
   final _uuid = const Uuid();
+  AudioPlayer? _metadataPlayer;
 
   /// Request storage permission (Android/iOS)
   Future<bool> requestStoragePermission() async {
     if (Platform.isAndroid) {
-      // Android 13+ uses different permissions
-      if (await _isAndroid13OrHigher()) {
-        final status = await Permission.audio.request();
-        return status.isGranted;
-      } else {
-        final status = await Permission.storage.request();
-        return status.isGranted;
-      }
+      // Android 13+ uses READ_MEDIA_AUDIO
+      final status = await Permission.audio.request();
+      if (status.isGranted) return true;
+      // Fallback for older Android
+      final storageStatus = await Permission.storage.request();
+      return storageStatus.isGranted;
     } else if (Platform.isIOS) {
+      // iOS uses media library permission
       final status = await Permission.mediaLibrary.request();
       return status.isGranted;
     }
     return true; // Desktop platforms don't need permission
-  }
-
-  Future<bool> _isAndroid13OrHigher() async {
-    if (!Platform.isAndroid) return false;
-    // Android 13 = API level 33
-    // This is a simplified check; in production you'd use platform channels
-    return true; // Assume modern Android for this implementation
   }
 
   /// Pick audio files from device storage
@@ -51,7 +43,7 @@ class AudioFileService {
       if (file.path == null) continue;
 
       try {
-        final metadata = await _extractMetadata(file.path!);
+        final metadata = await _extractMetadata(file.path!, file.name);
         audioFiles.add(metadata);
       } catch (e) {
         print('Error reading metadata for ${file.path}: $e');
@@ -59,9 +51,9 @@ class AudioFileService {
         audioFiles.add(LocalAudioFile(
           id: _uuid.v4(),
           path: file.path!,
-          title: file.name,
+          title: _getFileNameWithoutExtension(file.name),
           artist: 'Unknown Artist',
-          durationMs: 0, // Unknown duration
+          durationMs: 0,
         ));
       }
     }
@@ -69,39 +61,47 @@ class AudioFileService {
     return audioFiles;
   }
 
-  /// Extract metadata from audio file using ID3 tags
-  Future<LocalAudioFile> _extractMetadata(String filePath) async {
-    final tag = await _tagger.readTags(path: filePath);
-
-    // Get duration (this may require additional platform-specific code)
+  /// Extract metadata and duration from audio file
+  Future<LocalAudioFile> _extractMetadata(String filePath, String fileName) async {
+    // Use just_audio to get accurate duration
     final durationMs = await _getAudioDuration(filePath);
+
+    // Parse title/artist from filename ("Artist - Title.mp3" pattern)
+    final baseName = _getFileNameWithoutExtension(fileName);
+    String title = baseName;
+    String artist = 'Unknown Artist';
+
+    final dashIndex = baseName.indexOf(' - ');
+    if (dashIndex > 0) {
+      artist = baseName.substring(0, dashIndex).trim();
+      title = baseName.substring(dashIndex + 3).trim();
+    }
 
     return LocalAudioFile(
       id: _uuid.v4(),
       path: filePath,
-      title: tag?.title ?? _getFileNameWithoutExtension(filePath),
-      artist: tag?.artist ?? 'Unknown Artist',
-      album: tag?.album,
+      title: title,
+      artist: artist,
       durationMs: durationMs,
     );
   }
 
-  /// Get audio duration in milliseconds
-  /// Note: This is a placeholder. In production, you'd use just_audio or similar
-  /// to accurately determine duration.
+  /// Get audio duration in milliseconds using just_audio
   Future<int> _getAudioDuration(String filePath) async {
-    // Simplified: return 0 for now
-    // In production, use just_audio to load and get duration:
-    // final player = AudioPlayer();
-    // await player.setFilePath(filePath);
-    // final duration = player.duration;
-    // return duration?.inMilliseconds ?? 0;
-    return 0;
+    try {
+      _metadataPlayer ??= AudioPlayer();
+      final duration = await _metadataPlayer!.setFilePath(filePath);
+      return duration?.inMilliseconds ?? 0;
+    } catch (e) {
+      print('Error getting duration for $filePath: $e');
+      return 0;
+    }
   }
 
-  String _getFileNameWithoutExtension(String path) {
-    final fileName = path.split('/').last;
-    return fileName.split('.').first;
+  String _getFileNameWithoutExtension(String name) {
+    final lastDot = name.lastIndexOf('.');
+    if (lastDot > 0) return name.substring(0, lastDot);
+    return name;
   }
 
   /// Convert LocalAudioFile to PlaylistTrack (for UI display)
@@ -115,11 +115,17 @@ class AudioFileService {
       localFilePath: file.path,
     );
   }
+
+  /// Clean up resources
+  void dispose() {
+    _metadataPlayer?.dispose();
+    _metadataPlayer = null;
+  }
 }
 
 class LocalAudioFile {
   final String id; // Client-generated UUID
-  final String path; // Local file path - NEVER sent to server
+  final String path; // Local file path — NEVER sent to server
   final String title;
   final String artist;
   final String? album;

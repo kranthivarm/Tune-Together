@@ -25,14 +25,18 @@ class _RoomScreenState extends State<RoomScreen> {
 
   Room? _room;
   List<PlaylistTrack> _localPlaylist = [];
-  Map<String, String> _trackFilePaths = {}; // trackId -> local file path
+  final Map<String, String> _trackFilePaths = {}; // trackId → local file path
   PlaylistTrack? _currentTrack;
   bool _isPlaying = false;
   bool _isLoading = true;
   String? _errorMessage;
   int _clockOffsetMs = 0;
-  
-  // Mirror mode state (Phase 5 - Android only)
+
+  // Playback progress
+  Duration _currentPosition = Duration.zero;
+  Duration _totalDuration = Duration.zero;
+
+  // Mirror mode state (Phase 5 — Android only)
   bool _isMirrorMode = false;
   bool _isMirrorModeAvailable = false;
 
@@ -44,9 +48,9 @@ class _RoomScreenState extends State<RoomScreen> {
     _wsService = WebSocketService();
     _liveKitService = LiveKitService();
     _audioFileService = AudioFileService();
-    
+
     _isMirrorModeAvailable = Platform.isAndroid;
-    
+
     _initialize();
   }
 
@@ -60,14 +64,26 @@ class _RoomScreenState extends State<RoomScreen> {
       await _wsService.connect(widget.auth.token);
       _setupWebSocketListeners();
 
-      // 3. Connect to LiveKit
-      // Note: Need to get LiveKit token from backend
-      // For now, this is a placeholder
-      // await _liveKitService.connect(
-      //   url: 'ws://localhost:7880',
-      //   token: '<livekit-token>',
-      //   isHost: widget.auth.isHost,
-      // );
+      // 3. Listen for LiveKit token from room_state
+      _wsService.roomState.listen((state) {
+        final token = state['livekitToken'] as String?;
+        if (token != null && !_liveKitService.isConnected) {
+          _connectLiveKit(token);
+        }
+      });
+
+      // 4. Listen to playback state (host only)
+      if (widget.auth.isHost) {
+        _liveKitService.playbackState.listen((state) {
+          if (mounted) {
+            setState(() {
+              _isPlaying = state.isPlaying;
+              _currentPosition = state.position;
+              _totalDuration = state.duration;
+            });
+          }
+        });
+      }
 
       setState(() {
         _isLoading = false;
@@ -80,8 +96,26 @@ class _RoomScreenState extends State<RoomScreen> {
     }
   }
 
+  Future<void> _connectLiveKit(String token) async {
+    try {
+      // Use the LiveKit URL from env or default
+      const livekitUrl = String.fromEnvironment(
+        'LIVEKIT_URL',
+        defaultValue: 'ws://localhost:7880',
+      );
+      await _liveKitService.connect(
+        url: livekitUrl,
+        token: token,
+        isHost: widget.auth.isHost,
+      );
+      print('Connected to LiveKit');
+    } catch (e) {
+      print('LiveKit connection failed: $e');
+      // Don't block — LiveKit is optional for basic room functionality
+    }
+  }
+
   void _setupWebSocketListeners() {
-    // Listen to WebSocket messages
     _wsService.messages.listen((message) {
       switch (message.type) {
         case WSMessageType.playCommand:
@@ -103,6 +137,9 @@ class _RoomScreenState extends State<RoomScreen> {
         case WSMessageType.memberLeft:
           _refreshRoomState();
           break;
+        case WSMessageType.trackChanged:
+          _handleTrackChanged(message.payload);
+          break;
         case WSMessageType.mirrorModeStarted:
           setState(() => _isMirrorMode = true);
           break;
@@ -114,39 +151,53 @@ class _RoomScreenState extends State<RoomScreen> {
       }
     });
 
-    // Listen to clock sync updates
     _wsService.clockSync.listen((sync) {
       setState(() {
         _clockOffsetMs = sync.offsetMs;
       });
-      print('Clock sync: offset=${sync.offsetMs}ms, rtt=${sync.rttMs}ms');
     });
   }
 
   void _handlePlayCommand(Map<String, dynamic> payload) {
-    final trackId = payload['trackId'] as String;
-    final track = _localPlaylist.firstWhere((t) => t.id == trackId);
-    setState(() {
-      _currentTrack = track;
-      _isPlaying = true;
-    });
-    // TODO: Start audio playback via LiveKit
+    final trackId = payload['trackId'] as String?;
+    if (trackId == null) return;
+    final track = _localPlaylist.where((t) => t.id == trackId).firstOrNull;
+    if (track != null) {
+      setState(() {
+        _currentTrack = track;
+        _isPlaying = true;
+      });
+    }
   }
 
   void _handlePauseCommand() {
     setState(() => _isPlaying = false);
-    // TODO: Pause audio via LiveKit
   }
 
   void _handleSeekCommand(Map<String, dynamic> payload) {
-    final positionMs = payload['positionMs'] as int;
-    // TODO: Seek audio via LiveKit
+    final positionMs = (payload['positionMs'] as num?)?.toInt() ?? 0;
+    _liveKitService.seek(Duration(milliseconds: positionMs));
   }
 
   void _handleSkipCommand(Map<String, dynamic> payload) {
-    final trackId = payload['trackId'] as String;
-    final track = _localPlaylist.firstWhere((t) => t.id == trackId);
-    setState(() => _currentTrack = track);
+    final trackId = payload['trackId'] as String?;
+    if (trackId == null) return;
+    final track = _localPlaylist.where((t) => t.id == trackId).firstOrNull;
+    if (track != null) {
+      setState(() => _currentTrack = track);
+    }
+  }
+
+  void _handleTrackChanged(Map<String, dynamic> payload) {
+    setState(() {
+      _currentTrack = PlaylistTrack(
+        id: payload['trackId'] as String? ?? '',
+        title: payload['title'] as String? ?? 'Unknown',
+        artist: payload['artist'] as String? ?? 'Unknown',
+        durationMs: (payload['durationMs'] as num?)?.toInt() ?? 0,
+        orderIndex: (payload['trackIndex'] as num?)?.toInt() ?? 0,
+      );
+    });
   }
 
   Future<void> _refreshRoomState() async {
@@ -161,20 +212,19 @@ class _RoomScreenState extends State<RoomScreen> {
     }
   }
 
+  // ─── Host: File Picking ───────────────────────────────────
+
   Future<void> _addAudioFiles() async {
-    // Request storage permission
     final hasPermission = await _audioFileService.requestStoragePermission();
     if (!hasPermission) {
       _showError('Storage permission is required to access audio files');
       return;
     }
 
-    // Pick files
     final files = await _audioFileService.pickAudioFiles();
     if (files.isEmpty) return;
 
     try {
-      // Add each file's metadata to server
       for (final file in files) {
         final track = await _apiService.addTrackMetadata(
           roomCode: widget.auth.roomCode,
@@ -184,64 +234,105 @@ class _RoomScreenState extends State<RoomScreen> {
           durationMs: file.durationMs,
         );
 
-        // Store local file path mapping (never sent to server)
         _trackFilePaths[file.id] = file.path;
-        
+
         setState(() {
           _localPlaylist.add(track.copyWith(localFilePath: file.path));
         });
       }
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Added ${files.length} track(s) to playlist')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Added ${files.length} track(s) to playlist')),
+        );
+      }
     } catch (e) {
       _showError('Failed to add tracks: $e');
     }
   }
 
+  // ─── Host: Playback Controls ──────────────────────────────
+
   Future<void> _playTrack(PlaylistTrack track) async {
     if (!widget.auth.isHost) return;
+
+    final filePath = _trackFilePaths[track.id] ?? track.localFilePath;
+    if (filePath == null) {
+      _showError('Audio file not found locally. Re-add the track.');
+      return;
+    }
 
     setState(() {
       _currentTrack = track;
       _isPlaying = true;
     });
 
-    // Send play command via WebSocket
-    _wsService.sendPlay(trackId: track.id);
-
     // Start publishing audio via LiveKit
-    final filePath = _trackFilePaths[track.id] ?? track.localFilePath;
-    if (filePath != null) {
-      await _liveKitService.startPublishingFromFile(filePath);
-    }
+    await _liveKitService.startPublishingFromFile(filePath);
+    await _liveKitService.play();
+
+    // Notify all members
+    _wsService.sendPlay(trackId: track.id);
+    _wsService.sendTrackChanged(
+      trackId: track.id,
+      trackIndex: track.orderIndex,
+      title: track.title,
+      artist: track.artist,
+      durationMs: track.durationMs,
+    );
   }
 
   Future<void> _pausePlayback() async {
     if (!widget.auth.isHost) return;
-
     setState(() => _isPlaying = false);
-    _wsService.sendPause();
     await _liveKitService.pause();
+    _wsService.sendPause(positionMs: _currentPosition.inMilliseconds);
   }
+
+  Future<void> _resumePlayback() async {
+    if (!widget.auth.isHost) return;
+    setState(() => _isPlaying = true);
+    await _liveKitService.play();
+    _wsService.sendPlay(
+      trackId: _currentTrack?.id ?? '',
+      positionMs: _currentPosition.inMilliseconds,
+    );
+  }
+
+  void _skipNext() {
+    if (!widget.auth.isHost || _localPlaylist.isEmpty) return;
+    final currentIdx = _currentTrack != null
+        ? _localPlaylist.indexWhere((t) => t.id == _currentTrack!.id)
+        : -1;
+    final nextIdx = (currentIdx + 1) % _localPlaylist.length;
+    _playTrack(_localPlaylist[nextIdx]);
+  }
+
+  void _skipPrevious() {
+    if (!widget.auth.isHost || _localPlaylist.isEmpty) return;
+    final currentIdx = _currentTrack != null
+        ? _localPlaylist.indexWhere((t) => t.id == _currentTrack!.id)
+        : 0;
+    final prevIdx = currentIdx <= 0 ? _localPlaylist.length - 1 : currentIdx - 1;
+    _playTrack(_localPlaylist[prevIdx]);
+  }
+
+  // ─── Mirror Mode ──────────────────────────────────────────
 
   Future<void> _startMirrorMode() async {
     if (!widget.auth.isHost || !_isMirrorModeAvailable) return;
-
     try {
-      // Start system audio capture (Android MediaProjection)
-      await _liveKitService.startPublishingSystemAudio();
-      
+      // TODO: Implement when MediaProjection native code is ready
       setState(() => _isMirrorMode = true);
       _wsService.sendStartMirrorMode();
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Device audio mirroring started'),
-          backgroundColor: Colors.green,
-        ),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Device audio mirroring started'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
     } catch (e) {
       _showError('Failed to start mirror mode: $e');
     }
@@ -249,16 +340,18 @@ class _RoomScreenState extends State<RoomScreen> {
 
   Future<void> _stopMirrorMode() async {
     if (!widget.auth.isHost) return;
-
-    await _liveKitService.disconnect();
     setState(() => _isMirrorMode = false);
     _wsService.sendStopMirrorMode();
   }
 
+  // ─── Helpers ──────────────────────────────────────────────
+
   void _showError(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), backgroundColor: Colors.red),
-    );
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message), backgroundColor: Colors.red),
+      );
+    }
   }
 
   Future<void> _leaveRoom() async {
@@ -301,8 +394,11 @@ class _RoomScreenState extends State<RoomScreen> {
   void dispose() {
     _wsService.dispose();
     _liveKitService.dispose();
+    _audioFileService.dispose();
     super.dispose();
   }
+
+  // ─── Build ────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -352,21 +448,13 @@ class _RoomScreenState extends State<RoomScreen> {
       ),
       body: Column(
         children: [
-          // Room Code Card
           _buildRoomCodeCard(),
-
-          // Mirror Mode Banner (Android only, Host only)
           if (widget.auth.isHost && _isMirrorModeAvailable && !_isMirrorMode)
             _buildMirrorModeBanner(),
-
           if (_isMirrorMode)
             _buildActiveMirrorBanner(),
-
-          // Now Playing Card
           if (_currentTrack != null && !_isMirrorMode)
             _buildNowPlayingCard(),
-
-          // Playlist
           if (!_isMirrorMode)
             Expanded(child: _buildPlaylist()),
         ],
@@ -474,6 +562,10 @@ class _RoomScreenState extends State<RoomScreen> {
   }
 
   Widget _buildNowPlayingCard() {
+    final progressValue = _totalDuration.inMilliseconds > 0
+        ? _currentPosition.inMilliseconds / _totalDuration.inMilliseconds
+        : 0.0;
+
     return Container(
       margin: const EdgeInsets.all(16),
       padding: const EdgeInsets.all(16),
@@ -508,13 +600,38 @@ class _RoomScreenState extends State<RoomScreen> {
             style: const TextStyle(color: Colors.white70, fontSize: 14),
           ),
           if (widget.auth.isHost) ...[
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
+            // Progress bar
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: progressValue.clamp(0.0, 1.0),
+                backgroundColor: Colors.white24,
+                color: Colors.white,
+                minHeight: 4,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  _formatDuration(_currentPosition),
+                  style: const TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+                Text(
+                  _formatDuration(_totalDuration),
+                  style: const TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 IconButton(
                   icon: const Icon(Icons.skip_previous, color: Colors.white),
-                  onPressed: () {/* TODO */},
+                  onPressed: _skipPrevious,
                 ),
                 IconButton(
                   icon: Icon(
@@ -522,13 +639,19 @@ class _RoomScreenState extends State<RoomScreen> {
                     color: Colors.white,
                     size: 48,
                   ),
-                  onPressed: _isPlaying ? _pausePlayback : () => _playTrack(_currentTrack!),
+                  onPressed: _isPlaying ? _pausePlayback : _resumePlayback,
                 ),
                 IconButton(
                   icon: const Icon(Icons.skip_next, color: Colors.white),
-                  onPressed: () {/* TODO */},
+                  onPressed: _skipNext,
                 ),
               ],
+            ),
+          ] else ...[
+            const SizedBox(height: 8),
+            Text(
+              _isPlaying ? '🔊 Playing...' : '⏸ Paused',
+              style: const TextStyle(color: Colors.white70),
             ),
           ],
         ],
@@ -624,6 +747,12 @@ class _RoomScreenState extends State<RoomScreen> {
         ],
       ),
     );
+  }
+
+  String _formatDuration(Duration d) {
+    final minutes = d.inMinutes;
+    final seconds = d.inSeconds % 60;
+    return '${minutes.toString().padLeft(1, '0')}:${seconds.toString().padLeft(2, '0')}';
   }
 }
 
