@@ -84,3 +84,28 @@ services:
           name: tunetogether-api
           type: web
           property: hostport
+
+  # ─── React Web Frontend ─────────────────────────────────────
+  - type: web
+    name: tunetogether-web
+    runtime: static
+    region: oregon
+    plan: free
+    rootDir: ./web
+    buildCommand: npm install && npm run build
+    staticPublishPath: ./dist
+    headers:
+      - path: /*
+        name: Cache-Control
+        value: public, max-age=0, must-revalidate
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_URL
+        value: https://tunetogether-api.onrender.com/api/v1
+      - key: VITE_WS_URL
+        value: wss://tunetogether-realtime.onrender.com/ws
+      - key: VITE_LIVEKIT_URL
+        sync: false
