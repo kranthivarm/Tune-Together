@@ -106,4 +106,4 @@ services:
       - key: VITE_WS_URL
         value: wss://tunetogether-realtime.onrender.com/ws
       - key: VITE_LIVEKIT_URL
-        sync: false
+        value: wss://solofsoft-pbpwfp4d.livekit.cloud
