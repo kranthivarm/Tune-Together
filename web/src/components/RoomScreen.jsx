@@ -283,7 +283,8 @@ function RoomScreen() {
       await audioEngine.loadFile(file, trackId);
     }
 
-    // Start playback
+    // 1. Start playback FIRST — audio must flow through Web Audio graph
+    //    before we can capture it for LiveKit
     await audioEngine.play(trackId);
     setCurrentTrack(track);
     setIsPlaying(true);
@@ -292,9 +293,13 @@ function RoomScreen() {
     websocketService.sendPlay(track.id, 0);
     websocketService.sendTrackChanged(track);
 
-    // Ensure LiveKit is publishing
-    if (!livekitService.isPublishing) {
+    // 2. THEN start/restart publishing to LiveKit
+    //    Always re-publish to ensure a fresh audio track reference
+    //    (AudioEngine creates new source nodes on each play())
+    try {
       await livekitService.startPublishing();
+    } catch (e) {
+      console.error('LiveKit publish failed:', e);
     }
   }, [isHost]);
 

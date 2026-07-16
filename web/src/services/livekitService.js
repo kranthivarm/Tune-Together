@@ -3,6 +3,9 @@
  * 
  * Host: Publishes audio from AudioEngine's MediaStream output
  * Member: Subscribes to host's audio track and plays through speakers
+ * 
+ * IMPORTANT: The host should NOT publish until audio is actually playing,
+ * otherwise LiveKit may get a silent/empty stream.
  */
 
 import {
@@ -22,6 +25,8 @@ class LiveKitService {
     this.audioElement = null;
     this.connected = false;
     this.isPublishing = false;
+    this.isHost = false;
+    this._displayStream = null;
 
     // Clock sync
     this.clockOffsetMs = 0;
@@ -43,6 +48,13 @@ class LiveKitService {
       return;
     }
 
+    if (this.connected) {
+      console.log('Already connected to LiveKit');
+      return;
+    }
+
+    this.isHost = isHost;
+
     try {
       this.room = new Room({
         adaptiveStream: true,
@@ -51,56 +63,75 @@ class LiveKitService {
 
       this.setupRoomEventListeners();
 
+      console.log('Connecting to LiveKit at:', LIVEKIT_URL);
       await this.room.connect(LIVEKIT_URL, token);
       this.connected = true;
-      console.log('Connected to LiveKit room');
+      console.log('Connected to LiveKit room:', this.room.name);
       this.notifyConnectionListeners(true);
 
-      // If host, start publishing audio from AudioEngine
-      if (isHost) {
-        await this.startPublishing();
-      }
+      // DO NOT publish here for host — wait until they actually play a track
+      // Publishing a silent stream causes issues
     } catch (error) {
       console.error('Failed to connect to LiveKit:', error);
       this.connected = false;
       this.notifyConnectionListeners(false);
-      // Don't throw — LiveKit is optional for room functionality
     }
   }
 
   /**
-   * Host: Start publishing audio from AudioEngine's MediaStream
+   * Host: Start publishing audio from AudioEngine's MediaStream.
+   * Called when the host actually starts playing a track.
    */
   async startPublishing() {
-    if (!this.room || !this.connected) return;
+    if (!this.room || !this.connected) {
+      console.warn('Not connected to LiveKit, cannot publish');
+      return;
+    }
 
     try {
-      // Initialize AudioEngine if needed
+      // Ensure AudioEngine is initialized
       await audioEngine.init();
 
       const stream = audioEngine.getOutputStream();
       if (!stream) {
-        console.warn('AudioEngine has no output stream yet');
+        console.warn('AudioEngine has no output stream');
         return;
       }
 
       const audioTracks = stream.getAudioTracks();
       if (audioTracks.length === 0) {
-        console.warn('No audio tracks in MediaStream');
+        console.warn('No audio tracks in AudioEngine MediaStream');
         return;
       }
 
-      // Create LocalAudioTrack from AudioEngine's MediaStream
-      this.localAudioTrack = new LocalAudioTrack(audioTracks[0], undefined, false);
+      // If already publishing, unpublish first
+      if (this.localAudioTrack) {
+        try {
+          await this.room.localParticipant.unpublishTrack(this.localAudioTrack);
+          this.localAudioTrack.stop();
+        } catch (e) {
+          // Ignore
+        }
+        this.localAudioTrack = null;
+      }
+
+      // Get a FRESH reference to the audio track from the MediaStreamDestination
+      // The MediaStreamDestination continuously outputs whatever goes through
+      // the Web Audio graph, so this track is always "live"
+      const freshTrack = stream.getAudioTracks()[0];
+      console.log('Publishing audio track:', freshTrack.label, 'state:', freshTrack.readyState);
+
+      // Create LiveKit LocalAudioTrack
+      this.localAudioTrack = new LocalAudioTrack(freshTrack, undefined, false);
 
       // Publish to room
       await this.room.localParticipant.publishTrack(this.localAudioTrack, {
         name: 'host-audio',
-        source: Track.Source.Microphone, // Use microphone source for audio
+        source: Track.Source.Microphone,
       });
 
       this.isPublishing = true;
-      console.log('Publishing audio track to LiveKit');
+      console.log('✅ Publishing audio track to LiveKit');
     } catch (error) {
       console.error('Failed to publish audio:', error);
     }
@@ -111,8 +142,12 @@ class LiveKitService {
    */
   async stopPublishing() {
     if (this.localAudioTrack && this.room?.localParticipant) {
-      await this.room.localParticipant.unpublishTrack(this.localAudioTrack);
-      this.localAudioTrack.stop();
+      try {
+        await this.room.localParticipant.unpublishTrack(this.localAudioTrack);
+        this.localAudioTrack.stop();
+      } catch (e) {
+        // Ignore
+      }
       this.localAudioTrack = null;
     }
     // Also stop any display media streams
@@ -149,7 +184,6 @@ class LiveKitService {
       // When the user stops sharing from the browser UI
       audioTracks[0].addEventListener('ended', () => {
         this.stopPublishing();
-        this.notifyConnectionListeners(true); // notify UI to update mirror state
       });
 
       // Publish to room
@@ -159,7 +193,7 @@ class LiveKitService {
       });
 
       this.isPublishing = true;
-      console.log('Publishing mirrored audio to LiveKit');
+      console.log('✅ Publishing mirrored audio to LiveKit');
     } catch (error) {
       console.error('Failed to publish mirrored audio:', error);
       throw error;
@@ -174,7 +208,7 @@ class LiveKitService {
 
     // Track subscribed (members receive host audio)
     this.room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
-      console.log('Track subscribed:', track.kind, 'from', participant.identity);
+      console.log('🔊 Track subscribed:', track.kind, 'from', participant.identity);
 
       if (track.kind === 'audio') {
         this.handleAudioTrack(track);
@@ -183,6 +217,7 @@ class LiveKitService {
 
     // Track unsubscribed
     this.room.on(RoomEvent.TrackUnsubscribed, (track) => {
+      console.log('Track unsubscribed:', track.kind);
       if (track.kind === 'audio') {
         this.stopAudio();
       }
@@ -202,23 +237,57 @@ class LiveKitService {
       this.connected = true;
       this.notifyConnectionListeners(true);
     });
+
+    // Connection quality changed
+    this.room.on(RoomEvent.ConnectionQualityChanged, (quality, participant) => {
+      console.log('Connection quality:', quality, 'for', participant.identity);
+    });
   }
 
   /**
-   * Handle incoming audio track from host (member side)
+   * Handle incoming audio track from host (member side).
+   * Creates a hidden <audio> element and plays the stream.
    */
   handleAudioTrack(track) {
-    if (!this.audioElement) {
-      this.audioElement = track.attach();
-      document.body.appendChild(this.audioElement);
-      this.audioElement.style.display = 'none';
-    } else {
-      track.attach(this.audioElement);
+    console.log('Handling audio track, creating audio element...');
+
+    // Remove old element if any
+    if (this.audioElement) {
+      this.audioElement.pause();
+      this.audioElement.remove();
+      this.audioElement = null;
     }
 
-    this.audioElement.play().catch((error) => {
-      console.error('Failed to play audio:', error);
-    });
+    // Use LiveKit's track.attach() which creates a proper <audio> element
+    this.audioElement = track.attach();
+    this.audioElement.style.display = 'none';
+
+    // Set attributes for autoplay
+    this.audioElement.autoplay = true;
+    this.audioElement.playsInline = true;
+    this.audioElement.volume = 1.0;
+
+    document.body.appendChild(this.audioElement);
+
+    // Try to play (may need user interaction on mobile)
+    const playPromise = this.audioElement.play();
+    if (playPromise) {
+      playPromise
+        .then(() => {
+          console.log('✅ Audio playing on member device');
+        })
+        .catch((error) => {
+          console.warn('Autoplay blocked, will play on user interaction:', error.message);
+          // Set up a one-time click handler to resume playback
+          const resumeAudio = () => {
+            this.audioElement?.play().catch(console.error);
+            document.removeEventListener('click', resumeAudio);
+            document.removeEventListener('touchstart', resumeAudio);
+          };
+          document.addEventListener('click', resumeAudio, { once: true });
+          document.addEventListener('touchstart', resumeAudio, { once: true });
+        });
+    }
 
     this.audioTrackListeners.forEach((cb) => cb(track));
   }
@@ -229,7 +298,8 @@ class LiveKitService {
   stopAudio() {
     if (this.audioElement) {
       this.audioElement.pause();
-      this.audioElement.currentTime = 0;
+      this.audioElement.remove();
+      this.audioElement = null;
     }
   }
 
@@ -250,49 +320,19 @@ class LiveKitService {
     }
 
     this.connected = false;
+    this.isPublishing = false;
   }
 
   /**
-   * Set clock offset from time sync
+   * Set clock offset for sync corrections
    */
   setClockOffset(offsetMs) {
     this.clockOffsetMs = offsetMs;
   }
 
-  /**
-   * Get current playback position (delegates to AudioEngine for host)
-   */
-  getCurrentPosition() {
-    return audioEngine.getCurrentTimeMs();
-  }
+  // ─── Listener Management ────────────────────────────────
 
-  /**
-   * Pause (delegates to AudioEngine)
-   */
-  pause() {
-    audioEngine.pause();
-  }
-
-  /**
-   * Apply drift correction
-   */
-  applyDriftCorrection({ targetPositionMs, adjustmentRate }) {
-    // For members: adjust the audio element playback rate
-    if (this.audioElement) {
-      const clampedRate = Math.max(0.98, Math.min(1.02, adjustmentRate));
-      this.audioElement.playbackRate = clampedRate;
-
-      setTimeout(() => {
-        if (this.audioElement) {
-          this.audioElement.playbackRate = 1.0;
-        }
-      }, 5000);
-    }
-  }
-
-  // ─── Listener management ─────────────────────────────────
-
-  onConnectionStateChange(callback) {
+  onConnectionChange(callback) {
     this.connectionListeners.push(callback);
     return () => {
       const idx = this.connectionListeners.indexOf(callback);
