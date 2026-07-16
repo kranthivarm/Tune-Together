@@ -89,7 +89,6 @@ services:
   - type: web
     name: tunetogether-web
     runtime: static
-    region: oregon
     plan: free
     rootDir: ./web
     buildCommand: npm install && npm run build
