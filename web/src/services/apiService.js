@@ -42,7 +42,7 @@ class ApiService {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify({
-        displayName,
+        hostDisplayName: displayName,
         ...(roomName && { roomName }),
         ...(password && { password }),
       }),
