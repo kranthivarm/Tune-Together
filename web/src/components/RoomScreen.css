@@ -119,6 +119,94 @@
   background: #5568d3;
 }
 
+/* Device Mirroring Card */
+.mirror-card {
+  background: white;
+  border-radius: 12px;
+  padding: 1.25rem 1.5rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  border-left: 4px solid #ff6b35;
+}
+
+.mirror-card-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+
+.mirror-info {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.mirror-icon {
+  font-size: 1.75rem;
+}
+
+.mirror-title {
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 0.125rem;
+}
+
+.mirror-subtitle {
+  font-size: 0.825rem;
+  color: #888;
+}
+
+.mirror-btn {
+  background: linear-gradient(135deg, #ff6b35, #f7418c);
+  color: white;
+  border: none;
+  padding: 0.6rem 1.25rem;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.9rem;
+  white-space: nowrap;
+  transition: transform 0.15s, box-shadow 0.2s;
+}
+
+.mirror-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(255, 107, 53, 0.35);
+}
+
+.mirror-active {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-weight: 500;
+  color: #333;
+}
+
+.mirror-pulse {
+  animation: mirror-blink 1.5s ease-in-out infinite;
+}
+
+@keyframes mirror-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.mirror-stop-btn {
+  margin-left: auto;
+  background: #f44336;
+  color: white;
+  border: none;
+  padding: 0.4rem 1rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 500;
+  transition: background 0.2s;
+}
+
+.mirror-stop-btn:hover {
+  background: #d32f2f;
+}
+
 /* Phase 7: Sync Status */
 .sync-status-card {
   display: flex;

@@ -115,7 +115,55 @@ class LiveKitService {
       this.localAudioTrack.stop();
       this.localAudioTrack = null;
     }
+    // Also stop any display media streams
+    if (this._displayStream) {
+      this._displayStream.getTracks().forEach(t => t.stop());
+      this._displayStream = null;
+    }
     this.isPublishing = false;
+  }
+
+  /**
+   * Host: Publish audio from an external MediaStream (e.g., getDisplayMedia for tab capture)
+   * Used for device mirroring — captures Spotify, YouTube, etc.
+   */
+  async startPublishingStream(stream) {
+    if (!this.room || !this.connected) {
+      console.warn('Not connected to LiveKit, cannot publish stream');
+      return;
+    }
+
+    try {
+      // Stop any existing publishing
+      await this.stopPublishing();
+
+      this._displayStream = stream;
+      const audioTracks = stream.getAudioTracks();
+      if (audioTracks.length === 0) {
+        throw new Error('No audio tracks in the provided stream');
+      }
+
+      // Create LocalAudioTrack from the display media stream
+      this.localAudioTrack = new LocalAudioTrack(audioTracks[0], undefined, false);
+
+      // When the user stops sharing from the browser UI
+      audioTracks[0].addEventListener('ended', () => {
+        this.stopPublishing();
+        this.notifyConnectionListeners(true); // notify UI to update mirror state
+      });
+
+      // Publish to room
+      await this.room.localParticipant.publishTrack(this.localAudioTrack, {
+        name: 'mirror-audio',
+        source: Track.Source.ScreenShareAudio,
+      });
+
+      this.isPublishing = true;
+      console.log('Publishing mirrored audio to LiveKit');
+    } catch (error) {
+      console.error('Failed to publish mirrored audio:', error);
+      throw error;
+    }
   }
 
   /**

@@ -6,11 +6,38 @@ import livekitService from '../services/livekitService';
 import audioEngine from '../services/AudioEngine';
 import './RoomScreen.css';
 
+// ─── Session persistence helpers ─────────────────────────────
+const SESSION_KEY = 'tunetogether_auth';
+
+function saveSession(auth) {
+  try {
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify(auth));
+  } catch (e) { /* ignore */ }
+}
+
+function loadSession() {
+  try {
+    const data = sessionStorage.getItem(SESSION_KEY);
+    return data ? JSON.parse(data) : null;
+  } catch (e) { return null; }
+}
+
+function clearSession() {
+  try { sessionStorage.removeItem(SESSION_KEY); } catch (e) { /* ignore */ }
+}
+
 function RoomScreen() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { auth } = location.state || {};
+
+  // Load auth from router state OR from sessionStorage (page refresh)
+  const auth = location.state?.auth || loadSession();
   const isHost = auth?.role === 'HOST';
+
+  // Persist auth to sessionStorage
+  useEffect(() => {
+    if (auth) saveSession(auth);
+  }, [auth]);
 
   // Room state
   const [members, setMembers] = useState([]);
@@ -32,9 +59,18 @@ function RoomScreen() {
   const [error, setError] = useState(null);
   const [isAddingFiles, setIsAddingFiles] = useState(false);
 
+  // Device mirroring (tab audio capture)
+  const [isMirroring, setIsMirroring] = useState(false);
+
   // Refs
   const fileInputRef = useRef(null);
   const localFilesRef = useRef(new Map()); // trackId → File object (never sent to server)
+  const playlistRef = useRef([]); // keep playlist in sync for callbacks
+
+  // Keep playlistRef current
+  useEffect(() => {
+    playlistRef.current = playlist;
+  }, [playlist]);
 
   // ─── Initialize ───────────────────────────────────────────
 
@@ -44,6 +80,7 @@ function RoomScreen() {
       return;
     }
 
+    apiService.setAuthToken(auth.token);
     initializeRoom();
     return () => cleanup();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -65,6 +102,10 @@ function RoomScreen() {
         if (state.livekitToken) {
           livekitService.connect({ token: state.livekitToken, isHost });
         }
+        // Also update members from room state
+        if (state.members) {
+          setMembers(state.members);
+        }
       });
 
       // 4. Set up AudioEngine listeners (host only)
@@ -76,7 +117,7 @@ function RoomScreen() {
         });
 
         audioEngine.onEnded((trackId) => {
-          handleTrackEnded(trackId);
+          handleTrackEndedRef.current(trackId);
         });
       }
 
@@ -89,12 +130,14 @@ function RoomScreen() {
   };
 
   const setupWebSocketListeners = () => {
-    // Play command (for members)
-    websocketService.on('play', (message) => {
-      const payload = message.payload || message;
-      const track = playlist.find((t) => t.id === payload.trackId);
-      if (track) {
-        setCurrentTrack(track);
+    // Play command — Go broadcasts { type: "play", payload: { trackId, positionMs, hostTimestamp } }
+    websocketService.on('play', (payload) => {
+      if (payload?.trackId) {
+        setCurrentTrack((prev) => {
+          // Find track in current playlist
+          const track = playlistRef.current.find((t) => t.id === payload.trackId);
+          return track || prev;
+        });
         setIsPlaying(true);
       }
     });
@@ -104,42 +147,32 @@ function RoomScreen() {
       setIsPlaying(false);
     });
 
-    // Track changed
-    websocketService.on('track_changed', (message) => {
-      const payload = message.payload || message;
-      setCurrentTrack({
-        id: payload.trackId,
-        title: payload.title,
-        artist: payload.artist,
-        durationMs: payload.durationMs,
-        orderIndex: payload.trackIndex,
-      });
+    // Track changed — Go broadcasts { type: "track_changed", payload: { trackId, title, artist, durationMs, trackIndex } }
+    websocketService.on('track_changed', (payload) => {
+      if (payload) {
+        setCurrentTrack({
+          id: payload.trackId,
+          title: payload.title,
+          artist: payload.artist,
+          durationMs: payload.durationMs,
+          orderIndex: payload.trackIndex,
+        });
+        // Members should also refresh playlist to get any new tracks
+        refreshPlaylist();
+      }
     });
 
     // Member joined/left
-    websocketService.on('member_joined', async () => {
-      try {
-        const roomData = await apiService.getRoomState(auth.roomCode);
-        setMembers(roomData.members || []);
-      } catch (e) { console.error(e); }
-    });
+    websocketService.on('member_joined', () => refreshPlaylist());
+    websocketService.on('member_left', () => refreshPlaylist());
+  };
 
-    websocketService.on('member_left', async () => {
-      try {
-        const roomData = await apiService.getRoomState(auth.roomCode);
-        setMembers(roomData.members || []);
-      } catch (e) { console.error(e); }
-    });
-
-    // Clock sync
-    websocketService.onClockSync(({ offsetMs, rttMs }) => {
-      setClockOffsetMs(offsetMs);
-      livekitService.setClockOffset(offsetMs);
-      if (rttMs < 20) setSyncQuality('excellent');
-      else if (rttMs < 50) setSyncQuality('good');
-      else if (rttMs < 100) setSyncQuality('fair');
-      else setSyncQuality('poor');
-    });
+  const refreshPlaylist = async () => {
+    try {
+      const roomData = await apiService.getRoomState(auth.roomCode);
+      setMembers(roomData.members || []);
+      setPlaylist(roomData.playlist || []);
+    } catch (e) { console.error('Refresh failed:', e); }
   };
 
   const cleanup = () => {
@@ -167,7 +200,7 @@ function RoomScreen() {
         // Extract metadata from filename
         const meta = audioEngine.constructor.extractMetadata
           ? audioEngine.constructor.extractMetadata(file)
-          : { title: file.name, artist: 'Unknown Artist' };
+          : extractMeta(file);
 
         // Store file locally (NEVER sent to server)
         localFilesRef.current.set(trackId, file);
@@ -180,25 +213,47 @@ function RoomScreen() {
           durationMs: info.durationMs,
         });
 
-        // Update local playlist
-        setPlaylist((prev) => [...prev, {
+        const newTrack = {
           id: savedTrack.id || trackId,
           title: meta.title,
           artist: meta.artist,
           durationMs: info.durationMs,
-          orderIndex: prev.length,
+          orderIndex: playlist.length,
           clientTrackId: trackId,
-        }]);
+        };
+
+        // Also map the server-assigned ID to the same file
+        if (savedTrack.id && savedTrack.id !== trackId) {
+          localFilesRef.current.set(savedTrack.id, file);
+          // Also cache the audio buffer under the server ID
+          if (audioEngine.isTrackLoaded(trackId)) {
+            await audioEngine.loadFile(file, savedTrack.id);
+          }
+        }
+
+        // Update local playlist
+        setPlaylist((prev) => [...prev, newTrack]);
+
+        // Notify members about new track via WebSocket
+        websocketService.sendTrackChanged(newTrack);
       }
     } catch (err) {
       console.error('Failed to add tracks:', err);
       setError('Failed to add tracks: ' + err.message);
     } finally {
       setIsAddingFiles(false);
-      // Reset file input
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
+
+  function extractMeta(file) {
+    let name = file.name;
+    const lastDot = name.lastIndexOf('.');
+    if (lastDot > 0) name = name.substring(0, lastDot);
+    const dash = name.indexOf(' - ');
+    if (dash > 0) return { artist: name.substring(0, dash).trim(), title: name.substring(dash + 3).trim() };
+    return { title: name.trim(), artist: 'Unknown Artist' };
+  }
 
   // ─── Host: Playback Controls ──────────────────────────────
 
@@ -209,7 +264,7 @@ function RoomScreen() {
 
     // Load file if not already cached
     if (!audioEngine.isTrackLoaded(trackId)) {
-      const file = localFilesRef.current.get(trackId);
+      const file = localFilesRef.current.get(trackId) || localFilesRef.current.get(track.id);
       if (!file) {
         setError('Audio file not found locally. Re-add the track.');
         return;
@@ -260,35 +315,48 @@ function RoomScreen() {
   }, [isHost, duration]);
 
   const handleSkipNext = useCallback(() => {
-    if (!isHost || playlist.length === 0) return;
+    if (!isHost || playlistRef.current.length === 0) return;
     const currentIdx = currentTrack
-      ? playlist.findIndex((t) => t.id === currentTrack.id)
+      ? playlistRef.current.findIndex((t) => t.id === currentTrack.id)
       : -1;
-    const nextIdx = (currentIdx + 1) % playlist.length;
-    handlePlay(playlist[nextIdx]);
-  }, [isHost, playlist, currentTrack, handlePlay]);
+    const nextIdx = (currentIdx + 1) % playlistRef.current.length;
+    handlePlay(playlistRef.current[nextIdx]);
+  }, [isHost, currentTrack, handlePlay]);
 
   const handleSkipPrev = useCallback(() => {
-    if (!isHost || playlist.length === 0) return;
+    if (!isHost || playlistRef.current.length === 0) return;
     const currentIdx = currentTrack
-      ? playlist.findIndex((t) => t.id === currentTrack.id)
+      ? playlistRef.current.findIndex((t) => t.id === currentTrack.id)
       : 0;
-    const prevIdx = currentIdx <= 0 ? playlist.length - 1 : currentIdx - 1;
-    handlePlay(playlist[prevIdx]);
-  }, [isHost, playlist, currentTrack, handlePlay]);
+    const prevIdx = currentIdx <= 0 ? playlistRef.current.length - 1 : currentIdx - 1;
+    handlePlay(playlistRef.current[prevIdx]);
+  }, [isHost, currentTrack, handlePlay]);
 
-  const handleTrackEnded = useCallback((trackId) => {
-    // Auto-play next track
-    const currentIdx = playlist.findIndex(
+  // Ref to avoid stale closure in audioEngine.onEnded
+  const handleTrackEndedRef = useRef((trackId) => {
+    const pl = playlistRef.current;
+    const currentIdx = pl.findIndex(
       (t) => (t.clientTrackId || t.id) === trackId
     );
-    if (currentIdx >= 0 && currentIdx < playlist.length - 1) {
-      handlePlay(playlist[currentIdx + 1]);
+    if (currentIdx >= 0 && currentIdx < pl.length - 1) {
+      handlePlay(pl[currentIdx + 1]);
     } else {
       setIsPlaying(false);
       setCurrentTrack(null);
     }
-  }, [playlist, handlePlay]);
+  });
+  handleTrackEndedRef.current = (trackId) => {
+    const pl = playlistRef.current;
+    const currentIdx = pl.findIndex(
+      (t) => (t.clientTrackId || t.id) === trackId
+    );
+    if (currentIdx >= 0 && currentIdx < pl.length - 1) {
+      handlePlay(pl[currentIdx + 1]);
+    } else {
+      setIsPlaying(false);
+      setCurrentTrack(null);
+    }
+  };
 
   const handleRemoveTrack = async (track) => {
     if (!isHost) return;
@@ -307,11 +375,46 @@ function RoomScreen() {
     }
   };
 
+  // ─── Device Mirroring (Tab Audio Capture) ─────────────────
+
+  const startMirroring = async () => {
+    if (!isHost) return;
+    try {
+      // Request tab/screen audio capture via getDisplayMedia
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: false,
+        audio: true,
+      });
+
+      // Check if audio track was captured
+      const audioTracks = stream.getAudioTracks();
+      if (audioTracks.length === 0) {
+        setError('No audio track captured. Make sure to share a tab with audio.');
+        return;
+      }
+
+      // Publish via LiveKit
+      await livekitService.startPublishingStream(stream);
+      setIsMirroring(true);
+    } catch (err) {
+      if (err.name !== 'AbortError') {
+        console.error('Mirror mode failed:', err);
+        setError('Failed to start mirroring: ' + err.message);
+      }
+    }
+  };
+
+  const stopMirroring = async () => {
+    await livekitService.stopPublishing();
+    setIsMirroring(false);
+  };
+
   // ─── Navigation ───────────────────────────────────────────
 
   const handleLeaveRoom = () => {
     if (window.confirm('Are you sure you want to leave this room?')) {
       cleanup();
+      clearSession();
       navigate('/');
     }
   };
@@ -376,6 +479,36 @@ function RoomScreen() {
             </div>
           </div>
 
+          {/* Device Mirroring Card (Host only) */}
+          {isHost && (
+            <div className="mirror-card">
+              {!isMirroring ? (
+                <div className="mirror-card-content">
+                  <div className="mirror-info">
+                    <span className="mirror-icon">📱</span>
+                    <div>
+                      <div className="mirror-title">Device Audio Mirroring</div>
+                      <div className="mirror-subtitle">
+                        Share audio from any tab — Spotify, YouTube, anything
+                      </div>
+                    </div>
+                  </div>
+                  <button className="mirror-btn" onClick={startMirroring}>
+                    🔊 Start Mirroring
+                  </button>
+                </div>
+              ) : (
+                <div className="mirror-active">
+                  <span className="mirror-pulse">🔴</span>
+                  <span>Mirroring device audio to all members...</span>
+                  <button className="mirror-stop-btn" onClick={stopMirroring}>
+                    Stop
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Sync Status */}
           <div className="sync-status-card">
             <div className="sync-indicator">
@@ -388,7 +521,7 @@ function RoomScreen() {
           </div>
 
           {/* Now Playing Card */}
-          {currentTrack && (
+          {currentTrack && !isMirroring && (
             <div className="now-playing-card">
               <div className="now-playing-header">NOW PLAYING</div>
               <div className="track-info">
@@ -439,75 +572,88 @@ function RoomScreen() {
             </div>
           )}
 
+          {/* Mirror Active for members */}
+          {!isHost && isMirroring && (
+            <div className="now-playing-card">
+              <div className="now-playing-header">DEVICE MIRRORING ACTIVE</div>
+              <div className="playback-indicator">
+                🔊 Host is sharing device audio...
+              </div>
+            </div>
+          )}
+
           {/* Playlist Section */}
-          <div className="playlist-section">
-            <div className="playlist-header">
-              <h2>Playlist</h2>
-              {isHost && (
-                <div className="add-tracks-wrapper">
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="audio/*"
-                    multiple
-                    onChange={handleFileSelect}
-                    style={{ display: 'none' }}
-                    id="audio-file-input"
-                  />
-                  <button
-                    className="add-tracks-btn"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={isAddingFiles}
-                  >
-                    {isAddingFiles ? '⏳ Adding...' : '➕ Add Tracks'}
-                  </button>
+          {!isMirroring && (
+            <div className="playlist-section">
+              <div className="playlist-header">
+                <h2>Playlist</h2>
+                {isHost && (
+                  <div className="add-tracks-wrapper">
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="audio/*"
+                      multiple
+                      onChange={handleFileSelect}
+                      style={{ display: 'none' }}
+                      id="audio-file-input"
+                    />
+                    <button
+                      className="add-tracks-btn"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={isAddingFiles}
+                    >
+                      {isAddingFiles ? '⏳ Adding...' : '➕ Add Tracks'}
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {playlist.length === 0 ? (
+                <div className="empty-state">
+                  <p>No tracks yet</p>
+                  <p className="empty-state-subtitle">
+                    {isHost
+                      ? 'Click "Add Tracks" to pick audio files from your device'
+                      : 'Waiting for host to add tracks...'}
+                  </p>
+                </div>
+              ) : (
+                <div className="playlist">
+                  {playlist.map((track, index) => (
+                    <div
+                      key={track.id}
+                      className={`playlist-item ${currentTrack?.id === track.id ? 'active' : ''}`}
+                      onClick={() => isHost && handlePlay(track)}
+                      style={isHost ? { cursor: 'pointer' } : {}}
+                    >
+                      <div className="track-number">{index + 1}</div>
+                      <div className="track-details">
+                        <div className="track-name">{track.title}</div>
+                        <div className="track-meta">
+                          {track.artist} • {formatDuration(track.durationMs)}
+                        </div>
+                      </div>
+                      {currentTrack?.id === track.id && isPlaying && (
+                        <div className="playing-icon">♫</div>
+                      )}
+                      {isHost && (
+                        <button
+                          className="remove-track-btn"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleRemoveTrack(track);
+                          }}
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
-
-            {playlist.length === 0 ? (
-              <div className="empty-state">
-                <p>No tracks yet</p>
-                <p className="empty-state-subtitle">
-                  {isHost
-                    ? 'Click "Add Tracks" to pick audio files from your device'
-                    : 'Waiting for host to add tracks...'}
-                </p>
-              </div>
-            ) : (
-              <div className="playlist">
-                {playlist.map((track, index) => (
-                  <div
-                    key={track.id}
-                    className={`playlist-item ${currentTrack?.id === track.id ? 'active' : ''}`}
-                    onClick={() => isHost && handlePlay(track)}
-                  >
-                    <div className="track-number">{index + 1}</div>
-                    <div className="track-details">
-                      <div className="track-name">{track.title}</div>
-                      <div className="track-meta">
-                        {track.artist} • {formatDuration(track.durationMs)}
-                      </div>
-                    </div>
-                    {currentTrack?.id === track.id && isPlaying && (
-                      <div className="playing-icon">♫</div>
-                    )}
-                    {isHost && (
-                      <button
-                        className="remove-track-btn"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleRemoveTrack(track);
-                        }}
-                      >
-                        ✕
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          )}
 
           {error && (
             <div className="error-toast">
@@ -524,11 +670,11 @@ function RoomScreen() {
             {members.map((member) => (
               <div key={member.userId} className="member-item">
                 <div className="member-avatar">
-                  {member.displayName.charAt(0).toUpperCase()}
+                  {(member.displayName || 'U').charAt(0).toUpperCase()}
                 </div>
                 <div className="member-info">
                   <div className="member-name">{member.displayName}</div>
-                  {member.role === 'HOST' && (
+                  {(member.role === 'HOST') && (
                     <span className="host-badge">HOST</span>
                   )}
                 </div>

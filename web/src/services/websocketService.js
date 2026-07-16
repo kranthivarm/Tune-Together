@@ -1,6 +1,11 @@
 /**
  * WebSocket Service for TuneTogether Signaling Server
  * Handles real-time commands, clock sync, and room events
+ * 
+ * Go backend uses snake_case message types:
+ *   play, pause, seek, skip, track_changed, time_sync_response, etc.
+ * 
+ * Go Message struct: { "type": "...", "payload": {...} }
  */
 
 const WS_BASE_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8081/ws';
@@ -83,6 +88,7 @@ class WebSocketService {
    * Disconnect from WebSocket
    */
   disconnect() {
+    this.maxReconnectAttempts = 0; // Prevent auto-reconnect
     if (this.ws) {
       this.ws.close();
       this.ws = null;
@@ -91,83 +97,88 @@ class WebSocketService {
   }
 
   /**
-   * Send a message to the server
+   * Send a message to the server.
+   * Go expects: { "type": "...", "payload": {...} }
    */
-  send(type, payload = {}) {
+  send(type, payload = null) {
     if (!this.connected || !this.ws) {
       console.error('WebSocket not connected');
       return;
     }
 
-    const message = {
-      type,
-      ...payload,
-    };
+    const message = { type };
+    if (payload !== null) {
+      message.payload = payload;
+    }
 
     this.ws.send(JSON.stringify(message));
   }
 
   /**
-   * Handle incoming messages
+   * Handle incoming messages from Go backend.
+   * Go sends: { "type": "...", "payload": {...} }
    */
   handleMessage(data) {
     try {
       const message = JSON.parse(data);
-      const { type } = message;
+      const { type, payload } = message;
 
-      // Handle clock sync
-      if (type === 'timeSyncRequest') {
-        this.handleTimeSyncRequest(message);
-        return;
-      } else if (type === 'timeSyncResult') {
-        this.handleTimeSyncResult(message);
+      // Handle clock sync — Go sends type "time_sync_response" with payload {t0}
+      if (type === 'time_sync_response') {
+        this.handleTimeSyncRequest(payload || message);
         return;
       }
 
-      // Handle room state (contains LiveKit token)
+      // Handle clock sync result — Go sends type "time_sync_result" with payload {offsetMs, rttMs}
+      if (type === 'time_sync_result') {
+        this.handleTimeSyncResult(payload || message);
+        return;
+      }
+
+      // Handle room state — contains LiveKit token
       if (type === 'room_state') {
-        const payload = message.payload || message;
-        if (payload.livekitToken) {
-          this.livekitToken = payload.livekitToken;
+        const statePayload = payload || message;
+        if (statePayload.livekitToken) {
+          this.livekitToken = statePayload.livekitToken;
         }
-        this.roomStateListeners.forEach((cb) => cb(payload));
+        this.roomStateListeners.forEach((cb) => cb(statePayload));
         return;
       }
 
       // Handle drift correction
-      if (type === 'driftCorrection' || type === 'drift_correction') {
-        this.handleDriftCorrection(message);
+      if (type === 'drift_correction') {
+        this.handleDriftCorrection(payload || message);
         return;
       }
 
-      // Notify listeners
+      // For all other messages (play, pause, track_changed, member_joined, etc.)
+      // notify listeners with the payload extracted
       const listeners = this.listeners.get(type) || [];
-      listeners.forEach((callback) => callback(message));
+      listeners.forEach((callback) => callback(payload || message));
     } catch (error) {
       console.error('Error parsing WebSocket message:', error);
     }
   }
 
   /**
-   * Handle time sync request (NTP-style)
+   * Handle time sync probe from server (NTP-style).
+   * Server sends: { t0: <server_timestamp> }
+   * We respond with: { t0, t1, t2 } where t1=receive, t2=send
    */
-  handleTimeSyncRequest(message) {
-    const t1 = message.t1; // Server sent time
-    const t2 = Date.now(); // Client receive time
-    const t3 = Date.now(); // Client send time (immediate)
+  handleTimeSyncRequest(payload) {
+    const t0 = payload.t0 || payload.T0; // Server send time
+    const t1 = Date.now(); // Client receive time
+    const t2 = Date.now(); // Client send time (immediate)
 
-    this.send('timeSyncResponse', {
-      t1,
-      t2,
-      t3,
-    });
+    this.send('time_sync_response', { t0, t1, t2 });
   }
 
   /**
-   * Handle time sync result
+   * Handle time sync result from server
    */
-  handleTimeSyncResult(message) {
-    const { offsetMs, rttMs } = message;
+  handleTimeSyncResult(payload) {
+    const offsetMs = payload.offsetMs || 0;
+    const rttMs = payload.rttMs || payload.RTTMs || 0;
     console.log(`Clock sync: offset=${offsetMs}ms, rtt=${rttMs}ms`);
 
     this.clockSyncListeners.forEach((callback) =>
@@ -176,10 +187,11 @@ class WebSocketService {
   }
 
   /**
-   * Phase 7: Handle drift correction command
+   * Handle drift correction command
    */
-  handleDriftCorrection(message) {
-    const { targetPositionMs, adjustmentRate } = message;
+  handleDriftCorrection(payload) {
+    const targetPositionMs = payload.targetPositionMs || 0;
+    const adjustmentRate = payload.adjustmentRate || 1.0;
     console.log(`Drift correction: target=${targetPositionMs}ms, rate=${adjustmentRate}x`);
 
     this.driftListeners.forEach((callback) =>
@@ -188,10 +200,10 @@ class WebSocketService {
   }
 
   /**
-   * Phase 7: Report playback position for drift monitoring
+   * Report playback position for drift monitoring
    */
   reportPlaybackPosition(positionMs, trackId) {
-    this.send('playbackPositionReport', {
+    this.send('playback_position_report', {
       positionMs,
       trackId,
       timestamp: Date.now(),
@@ -207,7 +219,6 @@ class WebSocketService {
     }
     this.listeners.get(type).push(callback);
 
-    // Return unsubscribe function
     return () => {
       const listeners = this.listeners.get(type) || [];
       const index = listeners.indexOf(callback);
@@ -231,7 +242,7 @@ class WebSocketService {
   }
 
   /**
-   * Phase 7: Subscribe to drift corrections
+   * Subscribe to drift correction commands
    */
   onDriftCorrection(callback) {
     this.driftListeners.push(callback);
@@ -262,40 +273,41 @@ class WebSocketService {
   }
 
   // ─── Host Control Messages ──────────────────────────────────
+  // All match Go's model.MsgType constants (snake_case)
 
   sendPlay(trackId, positionMs = 0) {
     this.send('play', {
-      payload: { trackId, positionMs, hostTimestamp: Date.now() },
+      trackId,
+      positionMs,
+      hostTimestamp: Date.now(),
     });
   }
 
   sendPause(positionMs = 0) {
     this.send('pause', {
-      payload: { positionMs, hostTimestamp: Date.now() },
+      positionMs,
+      hostTimestamp: Date.now(),
     });
   }
 
   sendSeek(positionMs) {
     this.send('seek', {
-      payload: { positionMs, hostTimestamp: Date.now() },
+      positionMs,
+      hostTimestamp: Date.now(),
     });
   }
 
   sendSkip(direction = 'next') {
-    this.send('skip', {
-      payload: { direction },
-    });
+    this.send('skip', { direction });
   }
 
   sendTrackChanged(track) {
     this.send('track_changed', {
-      payload: {
-        trackId: track.id,
-        trackIndex: track.orderIndex || 0,
-        title: track.title,
-        artist: track.artist,
-        durationMs: track.durationMs,
-      },
+      trackId: track.id,
+      trackIndex: track.orderIndex || 0,
+      title: track.title,
+      artist: track.artist,
+      durationMs: track.durationMs,
     });
   }
 }
