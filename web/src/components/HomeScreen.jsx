@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import Header from './Header';
+import AuthModal from './AuthModal';
 import './HomeScreen.css';
 
 function HomeScreen() {
@@ -7,7 +9,10 @@ function HomeScreen() {
 
   return (
     <div className="home-screen">
-      <div className="hero-section">
+      <Header />
+      <AuthModal />
+      <div className="main-content">
+        <div className="hero-section">
         <div className="logo">
           <svg width="100" height="100" viewBox="0 0 100 100">
             <circle cx="30" cy="50" r="20" fill="#673ab7" opacity="0.8" />
@@ -52,6 +57,7 @@ function HomeScreen() {
           <h3>⚡ Synced Playback</h3>
           <p>All devices play in perfect sync (&lt;30ms)</p>
         </div>
+      </div>
       </div>
     </div>
   );

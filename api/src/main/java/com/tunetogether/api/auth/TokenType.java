@@ -5,5 +5,6 @@ package com.tunetogether.api.auth;
  */
 public enum TokenType {
     HOST,
-    MEMBER
+    MEMBER,
+    APP_USER
 }

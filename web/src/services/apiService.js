@@ -35,6 +35,53 @@ class ApiService {
   }
 
   /**
+   * POST /auth/signup
+   */
+  async signup({ displayName, email, password }) {
+    const response = await fetch(`${API_BASE_URL}/auth/signup`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify({ displayName, email, password }),
+    });
+    return this.handleResponse(response);
+  }
+
+  /**
+   * POST /auth/login
+   */
+  async login({ email, password }) {
+    const response = await fetch(`${API_BASE_URL}/auth/login`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify({ email, password }),
+    });
+    return this.handleResponse(response);
+  }
+
+  /**
+   * GET /users/me
+   */
+  async getMe() {
+    const response = await fetch(`${API_BASE_URL}/users/me`, {
+      method: 'GET',
+      headers: this.getHeaders(true),
+    });
+    return this.handleResponse(response);
+  }
+
+  /**
+   * PUT /users/me/theme
+   */
+  async updateTheme({ themeMode, themeColor }) {
+    const response = await fetch(`${API_BASE_URL}/users/me/theme`, {
+      method: 'PUT',
+      headers: this.getHeaders(true),
+      body: JSON.stringify({ themeMode, themeColor }),
+    });
+    return this.handleResponse(response);
+  }
+
+  /**
    * POST /rooms — Create a new room
    */
   async createRoom({ displayName, roomName, password }) {

@@ -4,6 +4,7 @@ import apiService from '../services/apiService';
 import websocketService from '../services/websocketService';
 import livekitService from '../services/livekitService';
 import audioEngine from '../services/AudioEngine';
+import Header from './Header';
 import './RoomScreen.css';
 
 // ─── Session persistence helpers ─────────────────────────────
@@ -488,6 +489,7 @@ function RoomScreen() {
 
   return (
     <div className="room-screen">
+      <Header />
       <header className="room-header">
         <div className="room-title">
           <h1>{auth.roomCode}</h1>

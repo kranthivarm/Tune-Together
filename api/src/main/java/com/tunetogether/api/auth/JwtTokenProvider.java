@@ -38,23 +38,28 @@ public class JwtTokenProvider {
     }
 
     /**
-     * Generate a room-scoped JWT.
+     * Generate a room-scoped or app-scoped JWT.
      */
     public String generateToken(UUID userId, UUID roomId, String roomCode,
                                 String displayName, TokenType tokenType) {
         Date now = new Date();
         Date expiry = new Date(now.getTime() + expirationMs);
 
-        return Jwts.builder()
+        var builder = Jwts.builder()
                 .subject(userId.toString())
-                .claim("roomId", roomId.toString())
-                .claim("roomCode", roomCode)
                 .claim("role", tokenType.name())
                 .claim("displayName", displayName)
                 .issuedAt(now)
-                .expiration(expiry)
-                .signWith(secretKey)
-                .compact();
+                .expiration(expiry);
+
+        if (roomId != null) {
+            builder.claim("roomId", roomId.toString());
+        }
+        if (roomCode != null) {
+            builder.claim("roomCode", roomCode);
+        }
+
+        return builder.signWith(secretKey).compact();
     }
 
     /**
@@ -70,10 +75,15 @@ public class JwtTokenProvider {
                 .getPayload();
 
         UUID userId = UUID.fromString(claims.getSubject());
-        UUID roomId = UUID.fromString(claims.get("roomId", String.class));
-        String roomCode = claims.get("roomCode", String.class);
-        String displayName = claims.get("displayName", String.class);
         TokenType tokenType = TokenType.valueOf(claims.get("role", String.class));
+        String displayName = claims.get("displayName", String.class);
+
+        UUID roomId = null;
+        String roomIdStr = claims.get("roomId", String.class);
+        if (roomIdStr != null) {
+            roomId = UUID.fromString(roomIdStr);
+        }
+        String roomCode = claims.get("roomCode", String.class);
 
         return new RoomToken(userId, roomId, roomCode, displayName, tokenType);
     }

@@ -20,6 +20,18 @@ public class User {
     @Column(name = "display_name", length = 100)
     private String displayName;
 
+    @Column(name = "email", length = 255, unique = true)
+    private String email;
+
+    @Column(name = "password_hash", length = 255)
+    private String passwordHash;
+
+    @Column(name = "theme_mode", length = 20)
+    private String themeMode;
+
+    @Column(name = "theme_color", length = 20)
+    private String themeColor;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -42,6 +54,38 @@ public class User {
 
     public void setDisplayName(String displayName) {
         this.displayName = displayName;
+    }
+
+    public String getEmail() {
+        return email;
+    }
+
+    public void setEmail(String email) {
+        this.email = email;
+    }
+
+    public String getPasswordHash() {
+        return passwordHash;
+    }
+
+    public void setPasswordHash(String passwordHash) {
+        this.passwordHash = passwordHash;
+    }
+
+    public String getThemeMode() {
+        return themeMode;
+    }
+
+    public void setThemeMode(String themeMode) {
+        this.themeMode = themeMode;
+    }
+
+    public String getThemeColor() {
+        return themeColor;
+    }
+
+    public void setThemeColor(String themeColor) {
+        this.themeColor = themeColor;
     }
 
     public Instant getCreatedAt() {

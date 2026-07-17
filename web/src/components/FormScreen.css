@@ -1,25 +1,38 @@
+:root {
+  --bg-color: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  --card-bg: white;
+  --text-color: #333;
+  --primary-color: #667eea;
+  --primary-dark: #5568d3;
+  --primary-light: rgba(102, 126, 234, 0.2);
+  --border-color: #e0e0e0;
+}
+
 .form-screen {
   min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: var(--bg-color);
   padding: 2rem;
+  color: var(--text-color);
 }
 
 .form-container {
-  background: white;
-  border-radius: 16px;
-  padding: 2.5rem;
+  background: var(--card-bg);
+  backdrop-filter: blur(20px);
+  border-radius: 20px;
+  padding: 3rem;
   width: 100%;
   max-width: 480px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+  border: 1px solid var(--border-color);
 }
 
 .back-button {
   background: none;
   border: none;
-  color: #667eea;
+  color: var(--primary-color);
   font-size: 1rem;
   cursor: pointer;
   padding: 0.5rem;
@@ -35,7 +48,7 @@
 
 .form-container h1 {
   margin: 0 0 0.5rem 0;
-  color: #333;
+  color: var(--text-color);
   font-size: 2rem;
 }
 
@@ -52,24 +65,27 @@
 .form-group label {
   display: block;
   margin-bottom: 0.5rem;
-  color: #333;
+  color: var(--text-color);
   font-weight: 500;
   font-size: 0.95rem;
 }
 
 .form-group input {
   width: 100%;
-  padding: 0.875rem;
-  border: 2px solid #e0e0e0;
-  border-radius: 8px;
+  padding: 0.875rem 1rem;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
   font-size: 1rem;
-  transition: border-color 0.3s;
+  transition: all 0.2s;
+  background: var(--bg-color);
+  color: var(--text-color);
   box-sizing: border-box;
 }
 
 .form-group input:focus {
   outline: none;
-  border-color: #667eea;
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px var(--primary-light);
 }
 
 .checkbox-group {
@@ -81,7 +97,7 @@
   align-items: center;
   gap: 0.5rem;
   cursor: pointer;
-  color: #333;
+  color: var(--text-color);
   font-size: 0.95rem;
 }
 
@@ -107,20 +123,20 @@
 .submit-button {
   width: 100%;
   padding: 1rem;
-  background: #667eea;
+  background: var(--primary-color);
   color: white;
   border: none;
-  border-radius: 8px;
+  border-radius: 10px;
   font-size: 1.125rem;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.3s;
+  transition: all 0.2s;
+  margin-top: 1rem;
 }
 
 .submit-button:hover:not(:disabled) {
-  background: #5568d3;
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+  background: var(--primary-dark);
+  transform: translateY(-1px);
 }
 
 .submit-button:disabled {

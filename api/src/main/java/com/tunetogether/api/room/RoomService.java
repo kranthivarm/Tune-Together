@@ -22,6 +22,10 @@ import java.security.SecureRandom;
 import java.util.List;
 import java.util.UUID;
 
+import com.tunetogether.api.auth.RoomToken;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+
 @Service
 public class RoomService {
 
@@ -57,9 +61,18 @@ public class RoomService {
      */
     @Transactional
     public RoomResponse createRoom(CreateRoomRequest request) {
-        // Create lightweight user
-        User host = new User(request.getHostDisplayName().trim());
-        host = userRepository.save(host);
+        User host = getAuthenticatedAppUser();
+        if (host == null) {
+            // Create lightweight guest user
+            host = new User(request.getHostDisplayName().trim());
+            host = userRepository.save(host);
+        } else {
+            // If logged in, they might have provided a different display name for the room,
+            // but we'll stick to their main display name or update it? Let's just use their existing name.
+            // Actually, let's allow them to override it if they want by updating the User record?
+            // For now, let's just use the name they provided in the request or keep their original name.
+            // We'll use their original name to be safe and consistent.
+        }
 
         // Generate unique room code
         String code = generateUniqueCode();
@@ -100,9 +113,12 @@ public class RoomService {
             }
         }
 
-        // Create lightweight user
-        User user = new User(request.getDisplayName().trim());
-        user = userRepository.save(user);
+        User user = getAuthenticatedAppUser();
+        if (user == null) {
+            // Create lightweight guest user
+            user = new User(request.getDisplayName().trim());
+            user = userRepository.save(user);
+        }
 
         // Add membership
         membershipService.addMember(room, user, "MEMBER");
@@ -188,5 +204,16 @@ public class RoomService {
             }
         }
         throw new RuntimeException("Failed to generate unique room code after 10 attempts");
+    }
+
+    /**
+     * Helper to get the authenticated APP_USER from the security context.
+     */
+    private User getAuthenticatedAppUser() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth instanceof RoomToken roomToken && roomToken.getTokenType() == TokenType.APP_USER) {
+            return userRepository.findById(roomToken.getUserId()).orElse(null);
+        }
+        return null;
     }
 }

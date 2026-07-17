@@ -82,7 +82,7 @@ public class RoomController {
      * Validate that the authenticated user's token is scoped to the requested room.
      */
     private void validateRoomAccess(RoomToken auth, String code) {
-        if (!auth.getRoomCode().equals(code)) {
+        if (auth.getRoomCode() == null || !auth.getRoomCode().equals(code)) {
             throw new ForbiddenException("Token is not valid for room " + code);
         }
     }

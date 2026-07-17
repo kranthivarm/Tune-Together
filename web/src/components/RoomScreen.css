@@ -1,6 +1,19 @@
+:root {
+  --bg-color: #f5f5f5;
+  --card-bg: #ffffff;
+  --text-color: #333333;
+  --primary-color: #667eea;
+  --primary-dark: #5568d3;
+  --primary-light: #e3e7ff;
+  --border-color: #e0e0e0;
+}
+
 .room-screen {
   min-height: 100vh;
-  background: #f5f5f5;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-color);
+  color: var(--text-color);
 }
 
 .loading-container,
@@ -16,8 +29,8 @@
 .spinner {
   width: 48px;
   height: 48px;
-  border: 4px solid #e0e0e0;
-  border-top-color: #667eea;
+  border: 4px solid var(--border-color);
+  border-top-color: var(--primary-color);
   border-radius: 50%;
   animation: spin 1s linear infinite;
 }
@@ -27,23 +40,29 @@
 }
 
 .room-header {
-  background: white;
   padding: 1.5rem 2rem;
-  border-bottom: 1px solid #e0e0e0;
+  background-color: var(--card-bg);
+  border-bottom: 1px solid var(--border-color);
   display: flex;
   justify-content: space-between;
   align-items: center;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
 }
 
-.room-title h1 {
-  margin: 0 0 0.25rem 0;
-  color: #333;
-  font-size: 1.75rem;
+.room-info h1 {
+  margin: 0;
+  font-size: 1.5rem;
+  color: var(--text-color);
 }
 
-.member-count {
-  color: #666;
-  font-size: 0.9rem;
+.room-badge {
+  background: var(--primary-color);
+  color: white;
+  padding: 0.25rem 0.75rem;
+  border-radius: 20px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  margin-left: 1rem;
 }
 
 .leave-button {
@@ -61,25 +80,31 @@
   background: #d32f2f;
 }
 
-.room-content {
-  display: grid;
-  grid-template-columns: 1fr 300px;
-  gap: 1.5rem;
-  padding: 1.5rem 2rem;
+.main-content {
+  flex: 1;
+  display: flex;
+  padding: 2rem;
+  gap: 2rem;
   max-width: 1400px;
   margin: 0 auto;
+  width: 100%;
+  box-sizing: border-box;
 }
 
-.main-section {
+.playlist-section {
+  flex: 2;
+  background-color: var(--card-bg);
+  border-radius: 12px;
+  padding: 1.5rem;
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
+  border: 1px solid var(--border-color);
 }
 
 .room-code-card,
 .sync-status-card,
 .now-playing-card {
-  background: white;
+  background: var(--card-bg);
   border-radius: 12px;
   padding: 1.5rem;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
@@ -100,12 +125,12 @@
 .room-code {
   font-size: 1.5rem;
   font-weight: 700;
-  color: #667eea;
+  color: var(--primary-color);
   font-family: monospace;
 }
 
 .copy-button {
-  background: #667eea;
+  background: var(--primary-color);
   color: white;
   border: none;
   padding: 0.5rem 1rem;
@@ -116,12 +141,12 @@
 }
 
 .copy-button:hover {
-  background: #5568d3;
+  background: var(--primary-dark);
 }
 
 /* Device Mirroring Card */
 .mirror-card {
-  background: white;
+  background: var(--card-bg);
   border-radius: 12px;
   padding: 1.25rem 1.5rem;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
@@ -147,7 +172,7 @@
 
 .mirror-title {
   font-weight: 600;
-  color: #333;
+  color: var(--text-color);
   margin-bottom: 0.125rem;
 }
 
@@ -179,7 +204,7 @@
   align-items: center;
   gap: 0.75rem;
   font-weight: 500;
-  color: #333;
+  color: var(--text-color);
 }
 
 .mirror-pulse {
@@ -207,7 +232,6 @@
   background: #d32f2f;
 }
 
-/* Phase 7: Sync Status */
 .sync-status-card {
   display: flex;
   justify-content: space-between;
@@ -256,9 +280,8 @@
   color: #666;
 }
 
-/* Now Playing */
 .now-playing-card {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, var(--primary-color) 0%, #764ba2 100%);
   color: white;
 }
 
@@ -292,7 +315,6 @@
   padding: 0.5rem 0;
 }
 
-/* Progress Bar */
 .progress-container {
   margin: 1rem 0 0.5rem;
   cursor: pointer;
@@ -327,7 +349,45 @@
   margin-top: 0.375rem;
 }
 
-/* Playback Controls */
+.btn-primary {
+  background: var(--primary-color);
+  color: white;
+  border: none;
+}
+
+.btn-primary:hover {
+  background: var(--primary-dark);
+}
+
+.btn-danger {
+  background: #e94560;
+  color: white;
+  border: none;
+}
+
+.btn-danger:hover {
+  background: #c81d39;
+}
+
+.btn-icon {
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  color: var(--text-color);
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.25rem;
+}
+
+.btn-icon:hover {
+  background: var(--border-color);
+  transform: scale(1.05);
+}
+
 .playback-controls {
   display: flex;
   align-items: center;
@@ -367,7 +427,6 @@
   background: rgba(255, 255, 255, 0.3);
 }
 
-/* Playlist Header */
 .playlist-header {
   display: flex;
   justify-content: space-between;
@@ -380,7 +439,7 @@
 }
 
 .add-tracks-btn {
-  background: #667eea;
+  background: var(--primary-color);
   color: white;
   border: none;
   padding: 0.5rem 1rem;
@@ -392,7 +451,7 @@
 }
 
 .add-tracks-btn:hover:not(:disabled) {
-  background: #5568d3;
+  background: var(--primary-dark);
   transform: translateY(-1px);
 }
 
@@ -401,7 +460,6 @@
   cursor: not-allowed;
 }
 
-/* Remove Track Button */
 .remove-track-btn {
   background: none;
   border: none;
@@ -427,7 +485,6 @@
   background: rgba(244, 67, 54, 0.1);
 }
 
-/* Clickable playlist items for host */
 .playlist-item {
   cursor: default;
 }
@@ -436,7 +493,6 @@
   cursor: pointer;
 }
 
-/* Error Toast */
 .error-toast {
   position: fixed;
   bottom: 2rem;
@@ -478,20 +534,6 @@
   }
 }
 
-/* Playlist */
-.playlist-section {
-  background: white;
-  border-radius: 12px;
-  padding: 1.5rem;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-}
-
-.playlist-section h2 {
-  margin: 0 0 1rem 0;
-  color: #333;
-  font-size: 1.25rem;
-}
-
 .empty-state {
   text-align: center;
   padding: 3rem 1rem;
@@ -503,53 +545,50 @@
   margin-top: 0.5rem;
 }
 
-.playlist {
+.track-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem;
+  background: var(--bg-color);
+  border-radius: 8px;
+  margin-bottom: 0.5rem;
+  transition: transform 0.2s, background-color 0.2s;
+  border: 1px solid var(--border-color);
+}
+
+.track-item:hover {
+  transform: translateX(4px);
+  background: var(--card-bg);
+  border-color: var(--primary-light);
+}
+
+.track-item.playing {
+  border-left: 4px solid var(--primary-color);
+  background: var(--primary-light);
+}
+
+.track-info {
+  flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 0.25rem;
 }
 
-.playlist-item {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  padding: 1rem;
-  border-radius: 8px;
-  transition: background 0.2s;
+.track-title {
+  font-weight: 600;
+  font-size: 1rem;
+  color: var(--text-color);
 }
 
-.playlist-item:hover {
-  background: #f5f5f5;
-}
-
-.playlist-item.active {
-  background: #e3f2fd;
-}
-
-.track-number {
-  font-weight: 700;
-  color: #999;
-  min-width: 24px;
-  text-align: center;
-}
-
-.track-details {
-  flex: 1;
-}
-
-.track-name {
-  font-weight: 500;
-  color: #333;
-  margin-bottom: 0.25rem;
-}
-
-.track-meta {
+.track-artist {
   font-size: 0.875rem;
-  color: #666;
+  color: var(--text-color);
+  opacity: 0.7;
 }
 
 .playing-icon {
-  color: #667eea;
+  color: var(--primary-color);
   font-size: 1.25rem;
   animation: bounce 1s ease-in-out infinite;
 }
@@ -559,19 +598,25 @@
   50% { transform: translateY(-4px); }
 }
 
-/* Sidebar */
 .sidebar {
-  background: white;
+  background: var(--card-bg);
   border-radius: 12px;
   padding: 1.5rem;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   height: fit-content;
 }
 
-.sidebar h2 {
-  margin: 0 0 1rem 0;
-  color: #333;
-  font-size: 1.25rem;
+.log-list {
+  background: #0f172a;
+  color: #4ade80;
+  border-radius: 8px;
+  padding: 1rem;
+  height: 300px;
+  overflow-y: auto;
+  font-family: 'Fira Code', monospace;
+  font-size: 0.85rem;
+  margin: 0;
+  list-style: none;
 }
 
 .members-list {

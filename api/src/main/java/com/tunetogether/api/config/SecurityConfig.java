@@ -46,6 +46,7 @@ public class SecurityConfig {
                 // Public endpoints — no auth required
                 .requestMatchers(HttpMethod.POST, "/api/v1/rooms").permitAll()
                 .requestMatchers(HttpMethod.POST, "/api/v1/rooms/*/join").permitAll()
+                .requestMatchers("/api/v1/auth/**").permitAll()
                 // Actuator health
                 .requestMatchers("/actuator/**").permitAll()
                 // All other endpoints require authentication
